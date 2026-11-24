@@ -1,0 +1,6 @@
+{
+  "apiBase": "",
+  "uploadApiBase": "",
+  "allowQueryApi": true,
+  "ngrokSkipWarning": true
+}
