@@ -311,6 +311,7 @@ export default function boot(options) {
       var blocked = state.permission === 'denied';
       var show = !(state.gateClosed || state.permission === 'granted');
       gate.classList.toggle('hidden', !show);
+      simLiftHeader(show);
       gate.classList.toggle('error', blocked);
       byId('location-gate-text').textContent = blocked ? GATE_BLOCKED_COPY : GATE_PROMPT_COPY;
       byId('allow-location').classList.toggle('hidden', blocked);
@@ -932,10 +933,12 @@ export default function boot(options) {
     }
 
     /* ================= Simulate drive (TESTING ONLY; everything is behind SHOW_TEST_SWITCH) =================
-       Turning the switch ON replaces the technician's GPS with a virtual one: it starts at SIM_START (Sector 49, Gurgaon),
-       draws the route to the customer pin with the page's own drawRoute(), calls T2 (start_journey) unless the job is
-       already past Start, then walks the route at SIM_SPEED_KMH, posting T3 (location, reason "stream") every
-       location_interval_sec, until it is within SIM_ARRIVE_M of the pin. It never calls T5 or anything after it.
+       The switch is in the page header. Turning it ON replaces the technician's GPS with a virtual one and sets the static
+       location SIM_START (Sector 49, Gurgaon); nothing is sent yet. The technician then taps Start trip as usual: T2
+       (start_journey) goes out from that position with the page's own route to the customer, and the drive begins: the
+       virtual technician walks the route at SIM_SPEED_KMH and posts T3 (location, reason "stream") every
+       location_interval_sec until it is within SIM_ARRIVE_M of the pin. If the trip was already started when the switch
+       goes ON (or the page reloaded mid-drive), it drives straight away. It never calls T5 or anything after it.
        Turning it OFF stops the timer and goes back to real GPS; the trip is left as it is on the server. */
 
     function simKey() { return SIM_STORAGE_KEY + ':' + (jobToken || jobId || ''); }
@@ -1034,7 +1037,8 @@ export default function boot(options) {
     }
 
     function simDrive() {
-      if (!sim.on || !sim.ready || sim.timer || sim.finished) return;
+      if (!sim.on || sim.timer || sim.finished) return;
+      if (!sim.ready && !simPrepareRoute()) return;
       sim.lastTick = Date.now();
       sim.lastPostAt = sim.reason === 'reopen' ? 0 : Date.now();   /* a reload posts at once, as "reopen" */
       sim.timer = setInterval(simTick, SIM_TICK_MS);
@@ -1107,7 +1111,7 @@ export default function boot(options) {
       var run = sim.run;
       sim.ready = false; sim.finishing = false; sim.finished = false; sim.busy = false;
       sim.pending = []; sim.dist = 0; sim.pts = []; sim.cum = []; sim.total = 0;
-      sim.reason = resume ? 'reopen' : 'stream';
+      sim.reason = (resume && driving) ? 'reopen' : 'stream';
       /* real GPS out: no poll timer, no watch, and (via setFix / currentPosition) no real fixes */
       if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
       stopWatch();
@@ -1115,8 +1119,15 @@ export default function boot(options) {
       var startAt = (resume && isFinite(Number(resume.latitude)) && isFinite(Number(resume.longitude)))
         ? { latitude: Number(resume.latitude), longitude: Number(resume.longitude) }
         : { latitude: SIM_START.latitude, longitude: SIM_START.longitude };
-      simSetPosition(startAt.latitude, startAt.longitude);   /* the marker jumps there at once (when the map is up) */
+      simSetPosition(startAt.latitude, startAt.longitude);   /* the static location: the marker is there when the map shows */
       simRender();
+
+      if (!driving) {
+        /* Stage "assigning": only the location is set. The technician taps Start trip as usual (T2 goes out from this
+           position, with the route to the customer), and schedulePoll() then starts the drive (see simDrive). */
+        setNotice('start-notice', 'Simulated location is set. Tap Start trip to begin the drive.');
+        return;
+      }
       setNotice(noticeId, null);
 
       function alive() { return sim.on && sim.run === run && !destroyed; }
@@ -1131,63 +1142,26 @@ export default function boot(options) {
         drawRouteLine();
         simDrive();
       }
-      /* The page's own current route, joined to the start point if it begins somewhere else. */
-      function pageRoute() {
-        var pts = state.route.slice();
-        if (haversineM(startAt, { latitude: pts[0][0], longitude: pts[0][1] }) > 50) pts.unshift([startAt.latitude, startAt.longitude]);
-        return pts;
-      }
+      /* Already past Start (reload, or the trip was started earlier): no T2; carry on with the page's own route when it
+         has one, otherwise draw one from the simulated position. */
+      if (!resume && state.route && state.route.length >= 2) { begin(simJoin(state.route.slice(), startAt)); return; }
+      simDrawn(startAt, pin).then(function (drawn) { begin(drawn.pts); });
+    }
 
-      if (driving) {
-        /* Already past Start (reload, or the technician tapped Start): no T2, carry on with the route. */
-        if (!resume && state.route && state.route.length >= 2) { begin(pageRoute()); return; }
-        simDrawn(startAt, pin).then(function (drawn) { begin(drawn.pts); });
-        return;
-      }
+    /* A route that begins somewhere else gets the start point put in front, so the marker does not jump. */
+    function simJoin(pts, startAt) {
+      if (pts.length && haversineM(startAt, { latitude: pts[0][0], longitude: pts[0][1] }) > 50) pts.unshift([startAt.latitude, startAt.longitude]);
+      return pts;
+    }
 
-      /* Stage "assigning": draw the route, call T2 with the fixed position, then drive. */
-      simDrawn(startAt, pin).then(function (drawn) {
-        if (!alive()) return null;
-        var payload = { latitude: startAt.latitude, longitude: startAt.longitude, recorded_at: isoNow() };
-        if (drawn.route) {
-          payload.route_polyline = drawn.route.route_polyline;
-          payload.route_distance_meters = drawn.route.route_distance_meters;
-          payload.route_duration_minutes = drawn.route.route_duration_minutes;
-          payload.route_computed_at = drawn.route.route_computed_at;
-        }
-        return postJson(API + 'start_journey', payload).then(function (result) {
-          if (!alive()) return;
-          var end = endOfLink(result.body, result.status);
-          if (end) { failLink(end); return; }
-          var body = result.body || {};
-          var data = body.data || {};
-          if (result.status === 409 && body.error === 'invalid_stage') {
-            /* Already started (the technician tapped Start first): skip T2 and drive the page's current route. */
-            syncStage(body);
-            if (!DRIVING_STAGES[state.stage]) { simTurnOff(); return; }
-            showTrip();
-            begin(state.route && state.route.length >= 2 ? pageRoute() : drawn.pts);
-            return;
-          }
-          if (!result.ok || !body.status) {
-            setNotice('start-notice', body.errorMessage || 'Simulate drive could not start the trip.', true);
-            return;
-          }
-          if (drawn.route) { state.route = drawn.pts; state.routeAt = Date.now(); }
-          state.eta = typeof data.eta_minutes === 'number' ? data.eta_minutes : null;
-          if (data.next_interval_sec) state.interval = data.next_interval_sec;
-          else if (state.detail && state.detail.location_interval_sec) state.interval = state.detail.location_interval_sec;
-          applyStage(data.stage || 'on_the_way');
-          setNotice('start-notice', null);
-          showTrip();
-          setNotice('trip-notice', data.route_accepted === false
-            ? 'Your route could not be used, so the backend drew its own.' : null);
-          state.lastPostAt = Date.now();
-          begin(drawn.pts);
-        });
-      }).catch(function () {
-        if (alive()) setNotice('start-notice', 'Simulate drive could not reach the server. Turn it off and on to retry.', true);
-      });
+    /* After Start trip: the page's route (drawn from the simulated position and sent in T2) becomes the drive path. */
+    function simPrepareRoute() {
+      var pin = simPin();
+      if (!pin || !sim.fix) return false;
+      var pts = (state.route && state.route.length >= 2) ? simJoin(state.route.slice(), sim.fix) : [];
+      if (pts.length < 2) pts = [[sim.fix.latitude, sim.fix.longitude], [pin.latitude, pin.longitude]];
+      simSetRoute(pts);
+      return sim.ready;
     }
 
     function simTurnOff() {
@@ -1199,6 +1173,7 @@ export default function boot(options) {
       simSave();                         /* clears the stored switch state */
       simRender();
       if (destroyed) return;
+      if (state.stage === 'assigning') setNotice('start-notice', null);
       /* Back to the real GPS path (marker, arrival gate and manual steps read the real position again). Nothing is posted
          automatically any more: the real poll is deliberately NOT restarted, or it would move the technician to the
          tester's real location. A reload restores the normal full behaviour. The trip stays as it is on the server. */
@@ -1219,29 +1194,38 @@ export default function boot(options) {
       if (saved && saved.on) simTurnOn(saved);
     }
 
+    /* The header is a fixed bar over both views. While the blocking location dialog is up, the header is lifted above it,
+       otherwise the switch (the way past "no GPS") would be unreachable exactly when it is needed. */
+    function simLiftHeader(up) {
+      if (!SHOW_TEST_SWITCH || !sim.toggle) return;
+      var header = root.querySelector('header');
+      if (header) header.style.zIndex = up ? '1001' : '';
+    }
+
     function simBuildUi() {
       if (!SHOW_TEST_SWITCH || demo) return;
+      var header = root.querySelector('header');
+      if (!header) return;
       var box = document.createElement('div');
       box.id = 'sim-switch';
-      box.setAttribute('style', 'position:fixed;left:10px;bottom:10px;z-index:2000;display:flex;flex-direction:column;' +
-        'align-items:flex-start;gap:6px;font:600 12px/1.2 system-ui,-apple-system,sans-serif');
-      var badge = document.createElement('div');
-      badge.id = 'sim-badge';
-      badge.textContent = 'SIMULATED DRIVE';
-      badge.setAttribute('style', 'display:none;background:#d93025;color:#fff;letter-spacing:.08em;padding:4px 10px;' +
-        'border-radius:6px;box-shadow:0 1px 6px rgba(0,0,0,.35)');
+      box.setAttribute('style', 'position:absolute;right:14px;top:calc(12px + env(safe-area-inset-top));display:flex;' +
+        'flex-direction:column;align-items:flex-end;gap:6px;font:600 11px/1.2 system-ui,-apple-system,sans-serif');
       var label = document.createElement('label');
-      label.setAttribute('style', 'display:flex;align-items:center;gap:8px;background:rgba(24,24,24,.86);color:#fff;' +
-        'padding:6px 12px;border-radius:999px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.35)');
+      label.setAttribute('style', 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.14);color:#fff;' +
+        'padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap');
       var input = document.createElement('input');
       input.type = 'checkbox';
       input.id = 'sim-toggle';
       input.setAttribute('style', 'margin:0');
       label.appendChild(input);
       label.appendChild(document.createTextNode('Test: simulate drive'));
-      box.appendChild(badge);
+      var badge = document.createElement('div');
+      badge.id = 'sim-badge';
+      badge.textContent = 'SIMULATED DRIVE';
+      badge.setAttribute('style', 'display:none;background:#d93025;color:#fff;letter-spacing:.08em;padding:3px 9px;border-radius:6px');
       box.appendChild(label);
-      document.body.appendChild(box);
+      box.appendChild(badge);
+      header.appendChild(box);
       injected.push(box);                 /* removed again on teardown */
       sim.toggle = input;
       sim.badge = badge;
