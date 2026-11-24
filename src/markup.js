@@ -21,6 +21,13 @@ const markup = `<header>
     <button class="camera-shutter" id="camera-shutter" type="button" aria-label="Take photo" disabled><span></span></button>
   </div>
 </div>
+<div class="progress hidden" id="upload-progress" role="alertdialog" aria-modal="true" aria-live="polite" aria-labelledby="upload-progress-title" aria-describedby="upload-progress-sub">
+  <div class="progress-card">
+    <div class="spinner" aria-hidden="true"></div>
+    <h2 class="progress-title" id="upload-progress-title">Uploading photo</h2>
+    <p class="progress-sub hidden" id="upload-progress-sub"></p>
+  </div>
+</div>
 <section id="view-assigning">
   <div class="card state" id="loading">Loading the job&hellip;</div>
 

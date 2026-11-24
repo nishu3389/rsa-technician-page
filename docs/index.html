@@ -34,6 +34,13 @@ const markup = `<header>
     <button class="camera-shutter" id="camera-shutter" type="button" aria-label="Take photo" disabled><span></span></button>
   </div>
 </div>
+<div class="progress hidden" id="upload-progress" role="alertdialog" aria-modal="true" aria-live="polite" aria-labelledby="upload-progress-title" aria-describedby="upload-progress-sub">
+  <div class="progress-card">
+    <div class="spinner" aria-hidden="true"></div>
+    <h2 class="progress-title" id="upload-progress-title">Uploading photo</h2>
+    <p class="progress-sub hidden" id="upload-progress-sub"></p>
+  </div>
+</div>
 <section id="view-assigning">
   <div class="card state" id="loading">Loading the job&hellip;</div>
 
@@ -333,6 +340,14 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job .camera-shutter span { display: block; width: 56px; height: 56px; border-radius: 50%; background: #f9c22e; }
 #rsa-job .camera-shutter:active span { background: #fff; }
 #rsa-job .camera-shutter[disabled] { opacity: .4; }
+/* upload progress: blocking overlay while a captured photo is being sent. z 800 sits above the camera sheet (500) and
+   below the location gate (1000), so a lost location permission still wins. No close affordance by design. */
+#rsa-job .progress { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 800; display: flex; align-items: center; justify-content: center; margin: 0; padding: 0 16px; background: rgba(0,0,0,0.55); touch-action: none; overscroll-behavior: contain; }
+#rsa-job .progress-card { width: 100%; max-width: 360px; padding: 24px 20px; border-radius: 16px; background: #fff; color: #12161c; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+#rsa-job .progress-title { margin: 14px 0 0; font-size: 20px; font-weight: 700; }
+#rsa-job .progress-sub { margin: 6px 0 0; font-size: 15px; color: #3a444f; }
+#rsa-job .spinner { width: 44px; height: 44px; margin: 0 auto; border-radius: 50%; border: 4px solid #e6e9ed; border-top-color: #f9c22e; animation: rsa-spin .8s linear infinite; }
+@keyframes rsa-spin { to { transform: rotate(360deg); } }
 #rsa-job .hidden { display: none !important; }
 
 /* ---------- OTP ---------- */
@@ -546,6 +561,7 @@ function boot(options) {
     var permissionStatus = null;
     var reachedWasOffered = false;   /* renderGate: was "I have reached" on offer at the last render */
     var gateOverflow = null;  /* body overflow captured while the location dialog is up; null when it is down */
+    var progressOverflow = null;  /* same, for the upload progress dialog */
     /* Simulate drive (testing only, see SHOW_TEST_SWITCH). Inert unless `on`. */
     var sim = {
       on: false, run: 0, ready: false, timer: null, busy: false, finishing: false, finished: false,
@@ -778,6 +794,7 @@ function boot(options) {
 
     function failLink(message) {
       closeGate();
+      hideUploadProgress();
       stopPolling();
       hide('view-trip');
       hide('assigning-body');
@@ -2362,10 +2379,41 @@ function boot(options) {
       openCamera();
     }
 
+    /* Blocking "Uploading photo" dialog. It goes up at the start of uploadPhoto() (so it is already on screen when the
+       camera sheet closes) and comes down on every exit path; hideUploadProgress() is idempotent. No close button,
+       backdrop and Escape do nothing. Body scroll is locked like the location gate: capture on show, restore on hide. */
+    function showUploadProgress() {
+      var overlay = byId('upload-progress');
+      if (!overlay) return;
+      var sub = byId('upload-progress-sub');
+      if (state.minPhotos) {
+        sub.textContent = 'Photo ' + (state.photos.length + 1) + ' of ' + state.minPhotos;
+        sub.classList.remove('hidden');
+      } else {
+        sub.textContent = '';
+        sub.classList.add('hidden');
+      }
+      overlay.classList.remove('hidden');
+      if (progressOverflow === null) {
+        progressOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+      }
+    }
+
+    function hideUploadProgress() {
+      var overlay = byId('upload-progress');
+      if (overlay) overlay.classList.add('hidden');
+      if (progressOverflow !== null) {
+        document.body.style.overflow = progressOverflow;
+        progressOverflow = null;
+      }
+    }
+
     function uploadPhoto(file) {
       if (!file || state.photoBusy) return;
       state.photoBusy = true;
       byId('take-photo').disabled = true;
+      showUploadProgress();
       setNotice('photos-notice', 'Uploading photo ' + (state.photos.length + 1) + '\u2026');
 
       positionFix().then(function (fix) {
@@ -2378,6 +2426,7 @@ function boot(options) {
         return postForm(UPLOAD_API + 'photos', form);
       }).then(function (result) {
         state.photoBusy = false;
+        hideUploadProgress();
         byId('take-photo').disabled = false;
         var end = endOfLink(result.body, result.status);
         if (end) { failLink(end); return; }
@@ -2398,6 +2447,7 @@ function boot(options) {
         if (data.completed || data.stage === 'completed') applyStage('completed');
       }).catch(function () {
         state.photoBusy = false;
+        hideUploadProgress();
         byId('take-photo').disabled = false;
         setNotice('photos-notice', 'Could not upload the photo. Check your connection and try again.', true);
       });

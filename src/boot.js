@@ -188,6 +188,7 @@ export default function boot(options) {
     var permissionStatus = null;
     var reachedWasOffered = false;   /* renderGate: was "I have reached" on offer at the last render */
     var gateOverflow = null;  /* body overflow captured while the location dialog is up; null when it is down */
+    var progressOverflow = null;  /* same, for the upload progress dialog */
     /* Simulate drive (testing only, see SHOW_TEST_SWITCH). Inert unless `on`. */
     var sim = {
       on: false, run: 0, ready: false, timer: null, busy: false, finishing: false, finished: false,
@@ -420,6 +421,7 @@ export default function boot(options) {
 
     function failLink(message) {
       closeGate();
+      hideUploadProgress();
       stopPolling();
       hide('view-trip');
       hide('assigning-body');
@@ -2004,10 +2006,41 @@ export default function boot(options) {
       openCamera();
     }
 
+    /* Blocking "Uploading photo" dialog. It goes up at the start of uploadPhoto() (so it is already on screen when the
+       camera sheet closes) and comes down on every exit path; hideUploadProgress() is idempotent. No close button,
+       backdrop and Escape do nothing. Body scroll is locked like the location gate: capture on show, restore on hide. */
+    function showUploadProgress() {
+      var overlay = byId('upload-progress');
+      if (!overlay) return;
+      var sub = byId('upload-progress-sub');
+      if (state.minPhotos) {
+        sub.textContent = 'Photo ' + (state.photos.length + 1) + ' of ' + state.minPhotos;
+        sub.classList.remove('hidden');
+      } else {
+        sub.textContent = '';
+        sub.classList.add('hidden');
+      }
+      overlay.classList.remove('hidden');
+      if (progressOverflow === null) {
+        progressOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+      }
+    }
+
+    function hideUploadProgress() {
+      var overlay = byId('upload-progress');
+      if (overlay) overlay.classList.add('hidden');
+      if (progressOverflow !== null) {
+        document.body.style.overflow = progressOverflow;
+        progressOverflow = null;
+      }
+    }
+
     function uploadPhoto(file) {
       if (!file || state.photoBusy) return;
       state.photoBusy = true;
       byId('take-photo').disabled = true;
+      showUploadProgress();
       setNotice('photos-notice', 'Uploading photo ' + (state.photos.length + 1) + '\u2026');
 
       positionFix().then(function (fix) {
@@ -2020,6 +2053,7 @@ export default function boot(options) {
         return postForm(UPLOAD_API + 'photos', form);
       }).then(function (result) {
         state.photoBusy = false;
+        hideUploadProgress();
         byId('take-photo').disabled = false;
         var end = endOfLink(result.body, result.status);
         if (end) { failLink(end); return; }
@@ -2040,6 +2074,7 @@ export default function boot(options) {
         if (data.completed || data.stage === 'completed') applyStage('completed');
       }).catch(function () {
         state.photoBusy = false;
+        hideUploadProgress();
         byId('take-photo').disabled = false;
         setNotice('photos-notice', 'Could not upload the photo. Check your connection and try again.', true);
       });

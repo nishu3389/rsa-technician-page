@@ -146,6 +146,14 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job .camera-shutter span { display: block; width: 56px; height: 56px; border-radius: 50%; background: #f9c22e; }
 #rsa-job .camera-shutter:active span { background: #fff; }
 #rsa-job .camera-shutter[disabled] { opacity: .4; }
+/* upload progress: blocking overlay while a captured photo is being sent. z 800 sits above the camera sheet (500) and
+   below the location gate (1000), so a lost location permission still wins. No close affordance by design. */
+#rsa-job .progress { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 800; display: flex; align-items: center; justify-content: center; margin: 0; padding: 0 16px; background: rgba(0,0,0,0.55); touch-action: none; overscroll-behavior: contain; }
+#rsa-job .progress-card { width: 100%; max-width: 360px; padding: 24px 20px; border-radius: 16px; background: #fff; color: #12161c; text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.35); }
+#rsa-job .progress-title { margin: 14px 0 0; font-size: 20px; font-weight: 700; }
+#rsa-job .progress-sub { margin: 6px 0 0; font-size: 15px; color: #3a444f; }
+#rsa-job .spinner { width: 44px; height: 44px; margin: 0 auto; border-radius: 50%; border: 4px solid #e6e9ed; border-top-color: #f9c22e; animation: rsa-spin .8s linear infinite; }
+@keyframes rsa-spin { to { transform: rotate(360deg); } }
 #rsa-job .hidden { display: none !important; }
 
 /* ---------- OTP ---------- */
