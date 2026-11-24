@@ -34,3 +34,6 @@ in the URL (otherwise anyone can craft a link that sends the job token to a serv
 - Backend CORS must allow the Pages origin, and — when using ngrok — list `ngrok-skip-browser-warning` in
   `Access-Control-Allow-Headers` (or use `&ngrok=0`). Also allow `x-rsa-job-token`, `authorization`, `content-type`.
 - Don't commit env files or keys here; the repo is public.
+
+## Google Maps key
+`config.json` holds a browser key for the map and the Start-trip route. It is public by design in a static page, so it must be restricted in Google Cloud: **Websites** `https://nishu3389.github.io/*` (plus `http://localhost:*/*` for testing) and the **Maps JavaScript API** (and **Routes API**) only. A link can still override it with `&maps_key=`.

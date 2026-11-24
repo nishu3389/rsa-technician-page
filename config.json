@@ -1,7 +1,7 @@
 {
   "apiBase": "",
   "uploadApiBase": "",
-  "googleMapsKey": "",
+  "googleMapsKey": "AIzaSyC_4em1fAO4npTjMlJB1EY2XeDwD685Po0",
   "googleRoutesKey": "",
   "allowQueryApi": true,
   "ngrokSkipWarning": true
