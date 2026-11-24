@@ -17,16 +17,24 @@ const markup = `<header>
   <span class="stage hidden" id="stage-pill"></span>
 </header>
 
-<section id="view-assigning">
-  <div class="gate hidden" id="location-gate" role="alertdialog" aria-modal="true" aria-labelledby="location-gate-title" aria-describedby="location-gate-text">
-    <div class="gate-card">
-      <h2 class="gate-title" id="location-gate-title">Location needed</h2>
-      <p id="location-gate-text">Location is needed for this trip. Allow location for this page to start.</p>
-      <button class="gate-btn" id="allow-location" type="button">Allow location</button>
-      <button class="gate-btn hidden" id="reload-page" type="button">Reload page</button>
-    </div>
+<div class="gate hidden" id="location-gate" role="alertdialog" aria-modal="true" aria-labelledby="location-gate-title" aria-describedby="location-gate-text">
+  <div class="gate-card">
+    <h2 class="gate-title" id="location-gate-title">Location needed</h2>
+    <p id="location-gate-text">Location is needed for this trip. Allow location for this page to start.</p>
+    <button class="gate-btn" id="allow-location" type="button">Allow location</button>
+    <button class="gate-btn hidden" id="reload-page" type="button">Reload page</button>
   </div>
-
+</div>
+<div class="camera hidden" id="camera-sheet" role="dialog" aria-modal="true" aria-label="Take photo">
+  <video id="camera-preview" autoplay playsinline muted></video>
+  <div class="camera-status" id="camera-status">Starting camera&hellip;</div>
+  <button class="camera-cancel" id="camera-cancel" type="button">Cancel</button>
+  <div class="camera-bar">
+    <p class="camera-help">Photos are taken live from the camera.</p>
+    <button class="camera-shutter" id="camera-shutter" type="button" aria-label="Take photo" disabled><span></span></button>
+  </div>
+</div>
+<section id="view-assigning">
   <div class="card state" id="loading">Loading the job&hellip;</div>
 
   <div class="card state hidden" id="error">
@@ -285,6 +293,24 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job .gate-card p { margin: 0; font-size: 15px; }
 #rsa-job .gate.error .gate-title { color: #8f1d1d; }
 #rsa-job .gate-btn { display: block; width: 100%; min-height: 48px; margin: 16px 0 0; padding: 0 18px; border-radius: 14px; background: #f9c22e; color: #101820; font-size: 16px; font-weight: 700; text-align: center; }
+/* live camera sheet: full-screen over the page. z 500 sits above the trip sheet (18), header (20) and ETA pill (15)
+   and below the location gate (1000), so a lost location permission still blocks the page on top of the camera */
+#rsa-job .camera { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 500; background: #000; color: #fff; }
+#rsa-job .camera video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+#rsa-job .camera-status { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); text-align: center; font-size: 15px; font-weight: 600; }
+#rsa-job .camera-cancel {
+  position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px; min-width: 44px; min-height: 44px; padding: 0 18px;
+  border-radius: 999px; background: rgba(16, 24, 32, .65); color: #fff; font-size: 15px; font-weight: 700;
+}
+#rsa-job .camera-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 36px 16px calc(24px + env(safe-area-inset-bottom)); background: linear-gradient(to top, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0));
+}
+#rsa-job .camera-help { margin: 0; font-size: 13px; text-align: center; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+#rsa-job .camera-shutter { width: 72px; height: 72px; padding: 0; border-radius: 50%; background: transparent; border: 4px solid #fff; display: flex; align-items: center; justify-content: center; }
+#rsa-job .camera-shutter span { display: block; width: 56px; height: 56px; border-radius: 50%; background: #f9c22e; }
+#rsa-job .camera-shutter:active span { background: #fff; }
+#rsa-job .camera-shutter[disabled] { opacity: .4; }
 #rsa-job .hidden { display: none !important; }
 
 /* ---------- OTP ---------- */
@@ -315,6 +341,16 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 
 var LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
 var LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+
+/* ---- TESTING ONLY: "Simulate drive" switch. Everything for it is behind SHOW_TEST_SWITCH: set it to false and the switch is
+   not rendered and the page behaves exactly as before. (Search for "Simulate drive" to find every piece.) ---- */
+var SHOW_TEST_SWITCH = true;
+var SIM_SPEED_KMH = 30;                       /* constant simulated speed along the route */
+var SIM_START = { latitude: 28.413358314787086, longitude: 77.04384214475694 };   /* Sector 49, Gurgaon */
+var SIM_ARRIVE_M = 20;                        /* stop (after posting the last point) within this distance of the customer pin */
+var SIM_ACCURACY_M = 10;                      /* accuracy_m sent with every simulated point */
+var SIM_TICK_MS = 1000;                       /* the marker moves every tick; a position is posted every location_interval_sec */
+var SIM_STORAGE_KEY = 'rsa_sim_drive';        /* sessionStorage: restores the switch (and last position) after a reload */
 
 /* Double-boot guard: remounts and fast refresh can call boot() twice. */
 var started = false;
@@ -462,6 +498,12 @@ function boot(options) {
     };
     var permissionStatus = null;
     var gateOverflow = null;  /* body overflow captured while the location dialog is up; null when it is down */
+    /* Simulate drive (testing only, see SHOW_TEST_SWITCH). Inert unless `on`. */
+    var sim = {
+      on: false, run: 0, ready: false, timer: null, busy: false, finishing: false, finished: false,
+      fix: null, pts: [], cum: [], total: 0, dist: 0, lastTick: 0, lastPostAt: 0, pending: [], reason: 'stream',
+      toggle: null, badge: null
+    };
 
     function text(id, value, fallback) {
       var el = byId(id);
@@ -710,6 +752,8 @@ function boot(options) {
     }
 
     function currentPosition() {
+      /* Simulate drive: while on, the technician's position is the virtual one, never navigator.geolocation. */
+      if (sim.on && sim.fix) return Promise.resolve({ latitude: sim.fix.latitude, longitude: sim.fix.longitude, accuracy: SIM_ACCURACY_M });
       return new Promise(function (resolve, reject) {
         if (!navigator.geolocation) { reject(new Error('no_geolocation')); return; }
         navigator.geolocation.getCurrentPosition(
@@ -878,6 +922,7 @@ function boot(options) {
       if (away === null) state.locked = null;                                   /* fail open */
       else state.locked = arrivalLocked(state.locked, away, state.serverAway !== null ? 0 : fixAccuracy());
       renderGate();
+      if (state.stage) renderEta();   /* the distance in "X min · Y away" follows every fix */
     }
 
     /* The server said we are too far: lock now, whatever the last fix said, until a fix reads within the radius. */
@@ -887,9 +932,11 @@ function boot(options) {
       state.away = distance;
       state.locked = true;
       renderGate();
+      renderEta();
     }
 
     function setFix(fix) {
+      if (sim.on) return;   /* Simulate drive: real GPS fixes are ignored while the virtual position drives state.fix */
       state.fix = fix;
       state.serverAway = null;
       setPermission('granted');
@@ -927,16 +974,32 @@ function boot(options) {
       renderShots();
     }
 
+    /* "450 m" below a kilometre (to the nearest 10 m), "1.2 km" from a kilometre up. */
+    function formatDistance(metres) {
+      if (metres >= 1000) return (Math.round(metres / 100) / 10) + ' km';
+      return metres < 10 ? '<10 m' : (Math.round(metres / 10) * 10) + ' m';
+    }
+
+    /* Straight-line distance left to the customer (state.away), only while still driving to them; '' when unknown. */
+    function awayText() {
+      if (!ARRIVAL_STAGES[state.stage]) return '';
+      return (typeof state.away === 'number' && isFinite(state.away)) ? formatDistance(state.away) : '';
+    }
+
     function renderEta() {
-      var label = STAGE_LABELS[state.stage] || '';
+      var stageLabel = STAGE_LABELS[state.stage] || '';
+      var dist = awayText();
+      var label = stageLabel;
       if (state.stage === 'reached') label = 'At the customer';
-      else if (DRIVING_STAGES[state.stage]) label = state.eta ? 'Arriving in ' + state.eta + ' min' : label;
+      else if (DRIVING_STAGES[state.stage]) {
+        if (state.eta) label = 'Arriving in ' + state.eta + ' min' + (dist ? ' \u00b7 ' + dist : '');
+        else if (dist) label = stageLabel + ' \u00b7 ' + dist;
+      }
       byId('eta-text').textContent = label;
       var customer = (state.detail && state.detail.customer) || {};
       text('peek-name', customer.name, 'Customer');
-      byId('peek-what').textContent = state.eta
-        ? (state.eta + ' min away \u00b7 ' + (STAGE_LABELS[state.stage] || ''))
-        : (STAGE_LABELS[state.stage] || '');
+      var how = state.eta ? (state.eta + ' min' + (dist ? ' \u00b7 ' + dist : '') + ' away') : (dist ? dist + ' away' : '');
+      byId('peek-what').textContent = how ? (how + ' \u00b7 ' + stageLabel) : stageLabel;
     }
 
     /* ---------------- map ---------------- */
@@ -1141,7 +1204,7 @@ function boot(options) {
     }
 
     function watchPosition() {
-      if (demo) return;
+      if (demo || sim.on) return;
       if (!navigator.geolocation || state.watchId !== null) return;
       state.watchId = navigator.geolocation.watchPosition(function (position) {
         setFix({
@@ -1156,6 +1219,7 @@ function boot(options) {
 
     function schedulePoll() {
       if (demo) return;
+      if (sim.on) { simDrive(); return; }   /* Simulate drive: the virtual driver posts, not the real poll */
       var seconds = state.interval || 15;
       state.pollTimer = setTimeout(function () { sendLocation().then(schedulePoll); }, seconds * 1000);
     }
@@ -1200,6 +1264,324 @@ function boot(options) {
     function stopPolling() {
       if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
       stopWatch();
+      simHalt();
+    }
+
+    /* ================= Simulate drive (TESTING ONLY; everything is behind SHOW_TEST_SWITCH) =================
+       Turning the switch ON replaces the technician's GPS with a virtual one: it starts at SIM_START (Sector 49, Gurgaon),
+       draws the route to the customer pin with the page's own drawRoute(), calls T2 (start_journey) unless the job is
+       already past Start, then walks the route at SIM_SPEED_KMH, posting T3 (location, reason "stream") every
+       location_interval_sec, until it is within SIM_ARRIVE_M of the pin. It never calls T5 or anything after it.
+       Turning it OFF stops the timer and goes back to real GPS; the trip is left as it is on the server. */
+
+    function simKey() { return SIM_STORAGE_KEY + ':' + (jobToken || jobId || ''); }
+
+    function simSave() {
+      try {
+        if (sim.on && sim.fix) {
+          window.sessionStorage.setItem(simKey(), JSON.stringify({ on: true, latitude: sim.fix.latitude, longitude: sim.fix.longitude }));
+        } else {
+          window.sessionStorage.removeItem(simKey());
+        }
+      } catch (error) { /* storage can be blocked: the switch just will not survive a reload */ }
+    }
+
+    function simLoad() {
+      try {
+        var raw = window.sessionStorage.getItem(simKey());
+        return raw ? JSON.parse(raw) : null;
+      } catch (error) { return null; }
+    }
+
+    function simPin() {
+      var at = (state.detail && state.detail.customer_location) || {};
+      if (at.latitude === null || at.latitude === undefined || at.latitude === '' ||
+          at.longitude === null || at.longitude === undefined || at.longitude === '') return null;
+      var lat = Number(at.latitude), lng = Number(at.longitude);
+      return (isFinite(lat) && isFinite(lng)) ? { latitude: lat, longitude: lng } : null;
+    }
+
+    function simRender() {
+      if (sim.toggle) sim.toggle.checked = sim.on;
+      if (sim.badge) sim.badge.style.display = sim.on ? 'block' : 'none';
+    }
+
+    function simHalt() {
+      if (sim.timer) { clearInterval(sim.timer); sim.timer = null; }
+    }
+
+    /* Route as a list of [lat, lng] with cumulative metres, so the driver can be placed by distance. */
+    function simSetRoute(points) {
+      sim.pts = points;
+      sim.cum = [0];
+      for (var i = 1; i < points.length; i += 1) {
+        sim.cum.push(sim.cum[i - 1] + haversineM(
+          { latitude: points[i - 1][0], longitude: points[i - 1][1] },
+          { latitude: points[i][0], longitude: points[i][1] }));
+      }
+      sim.total = sim.cum[sim.cum.length - 1] || 0;
+      sim.dist = 0;
+      sim.ready = points.length >= 2 && sim.total > 0;
+    }
+
+    /* Distance along the route of the point nearest `from` (a reload resumes from there, not from the route's start). */
+    function simNearest(from) {
+      var best = 0, bestD = Infinity, k = Math.cos(from.latitude * Math.PI / 180);
+      var px = from.longitude * k, py = from.latitude;
+      for (var i = 1; i < sim.pts.length; i += 1) {
+        var ax = sim.pts[i - 1][1] * k, ay = sim.pts[i - 1][0], bx = sim.pts[i][1] * k, by = sim.pts[i][0];
+        var dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+        var t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        var cx = ax + dx * t, cy = ay + dy * t;
+        var d = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+        if (d < bestD) { bestD = d; best = sim.cum[i - 1] + (sim.cum[i] - sim.cum[i - 1]) * t; }
+      }
+      return best;
+    }
+
+    /* Interpolates between polyline vertices (no vertex-to-vertex jumps). */
+    function simPointAt(distance) {
+      var pts = sim.pts, cum = sim.cum;
+      if (distance <= 0) return pts[0];
+      if (distance >= sim.total) return pts[pts.length - 1];
+      var i = 1;
+      while (i < cum.length - 1 && cum[i] < distance) i += 1;
+      var seg = cum[i] - cum[i - 1];
+      var t = seg > 0 ? (distance - cum[i - 1]) / seg : 0;
+      return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
+    }
+
+    /* The virtual technician is "the GPS": state.fix drives the page's own gate, distance and map marker. */
+    function simSetPosition(lat, lng) {
+      sim.fix = { latitude: lat, longitude: lng, accuracy: SIM_ACCURACY_M };
+      state.fix = sim.fix;
+      state.serverAway = null;
+      setPermission('granted');
+      updateGate();
+      moveTech();
+      simSave();
+    }
+
+    function simDrawn(from, pin) {
+      return drawRoute(from, pin).then(function (route) {
+        return { route: route, pts: route ? decodePolyline(route.route_polyline) : [] };
+      });
+    }
+
+    function simDrive() {
+      if (!sim.on || !sim.ready || sim.timer || sim.finished) return;
+      sim.lastTick = Date.now();
+      sim.lastPostAt = sim.reason === 'reopen' ? 0 : Date.now();   /* a reload posts at once, as "reopen" */
+      sim.timer = setInterval(simTick, SIM_TICK_MS);
+    }
+
+    function simTick() {
+      if (destroyed || !sim.on || !DRIVING_STAGES[state.stage]) { simHalt(); return; }
+      var pin = simPin();
+      if (!pin) { simHalt(); return; }
+      var now = Date.now();
+      var interval = (state.interval || 15) * 1000;
+      var dt = Math.min(now - sim.lastTick, interval * 2);    /* a throttled background tab must not teleport */
+      sim.lastTick = now;
+      if (!sim.finishing) {
+        sim.dist = Math.min(sim.total, sim.dist + (SIM_SPEED_KMH / 3.6) * (dt / 1000));   /* only ever forward */
+        var at = simPointAt(sim.dist);
+        simSetPosition(at[0], at[1]);
+        if (haversineM(sim.fix, pin) <= SIM_ARRIVE_M || sim.dist >= sim.total) sim.finishing = true;
+      }
+      if (sim.finishing || now - sim.lastPostAt >= interval) simPost();
+    }
+
+    function simPost() {
+      if (sim.busy || !sim.fix) return;
+      sim.busy = true;
+      var run = sim.run;
+      sim.pending.push({
+        latitude: sim.fix.latitude,
+        longitude: sim.fix.longitude,
+        accuracy_m: SIM_ACCURACY_M,
+        recorded_at: isoNow()
+      });
+      if (sim.pending.length > 20) sim.pending = sim.pending.slice(-20);
+      sim.lastPostAt = Date.now();
+      postJson(API + 'location', { points: sim.pending.slice(), reason: sim.reason }).then(function (result) {
+        sim.busy = false;
+        if (!sim.on || sim.run !== run || destroyed) return;
+        var end = endOfLink(result.body, result.status);
+        if (end) { failLink(end); return; }
+        var body = result.body || {};
+        if (!result.ok || !body.status) return;                 /* points stay pending and go out with the next post */
+        var data = body.data || {};
+        if (data.accepted === false) { simHalt(); sim.finished = true; applyStage(data.stage || state.stage); return; }
+        sim.pending = [];
+        sim.reason = 'stream';
+        if (typeof data.eta_minutes === 'number') state.eta = data.eta_minutes;
+        if (data.next_interval_sec) state.interval = data.next_interval_sec;
+        if (data.stage && data.stage !== state.stage) applyStage(data.stage); else renderEta();
+        if (sim.finishing) { simHalt(); sim.finished = true; }   /* the last point is in: stop the timer */
+      }).catch(function () { sim.busy = false; });
+    }
+
+    function simTurnOn(resume) {
+      if (!SHOW_TEST_SWITCH || sim.on || destroyed) return;
+      var pin = simPin();
+      var driving = !!DRIVING_STAGES[state.stage];
+      var noticeId = state.stage === 'assigning' ? 'start-notice' : 'trip-notice';
+      if (!state.detail || !pin) {
+        simRender();
+        setNotice(noticeId, 'Simulate drive needs the job and the customer location to be loaded.', true);
+        return;
+      }
+      if (state.stage !== 'assigning' && !driving) {
+        simRender();
+        setNotice(noticeId, 'Simulate drive only works before the technician reaches the customer.', true);
+        return;
+      }
+      sim.on = true;
+      sim.run += 1;
+      var run = sim.run;
+      sim.ready = false; sim.finishing = false; sim.finished = false; sim.busy = false;
+      sim.pending = []; sim.dist = 0; sim.pts = []; sim.cum = []; sim.total = 0;
+      sim.reason = resume ? 'reopen' : 'stream';
+      /* real GPS out: no poll timer, no watch, and (via setFix / currentPosition) no real fixes */
+      if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
+      stopWatch();
+
+      var startAt = (resume && isFinite(Number(resume.latitude)) && isFinite(Number(resume.longitude)))
+        ? { latitude: Number(resume.latitude), longitude: Number(resume.longitude) }
+        : { latitude: SIM_START.latitude, longitude: SIM_START.longitude };
+      simSetPosition(startAt.latitude, startAt.longitude);   /* the marker jumps there at once (when the map is up) */
+      simRender();
+      setNotice(noticeId, null);
+
+      function alive() { return sim.on && sim.run === run && !destroyed; }
+      function line(from) { return [[from.latitude, from.longitude], [pin.latitude, pin.longitude]]; }
+      /* Start driving along `pts` (a straight line when no road route could be had). */
+      function begin(pts) {
+        if (!alive()) return;
+        if (!pts || pts.length < 2) pts = line(startAt);
+        simSetRoute(pts);
+        if (resume) sim.dist = simNearest(startAt);   /* resume from the route point nearest the last position */
+        state.route = pts;
+        drawRouteLine();
+        simDrive();
+      }
+      /* The page's own current route, joined to the start point if it begins somewhere else. */
+      function pageRoute() {
+        var pts = state.route.slice();
+        if (haversineM(startAt, { latitude: pts[0][0], longitude: pts[0][1] }) > 50) pts.unshift([startAt.latitude, startAt.longitude]);
+        return pts;
+      }
+
+      if (driving) {
+        /* Already past Start (reload, or the technician tapped Start): no T2, carry on with the route. */
+        if (!resume && state.route && state.route.length >= 2) { begin(pageRoute()); return; }
+        simDrawn(startAt, pin).then(function (drawn) { begin(drawn.pts); });
+        return;
+      }
+
+      /* Stage "assigning": draw the route, call T2 with the fixed position, then drive. */
+      simDrawn(startAt, pin).then(function (drawn) {
+        if (!alive()) return null;
+        var payload = { latitude: startAt.latitude, longitude: startAt.longitude, recorded_at: isoNow() };
+        if (drawn.route) {
+          payload.route_polyline = drawn.route.route_polyline;
+          payload.route_distance_meters = drawn.route.route_distance_meters;
+          payload.route_duration_minutes = drawn.route.route_duration_minutes;
+          payload.route_computed_at = drawn.route.route_computed_at;
+        }
+        return postJson(API + 'start_journey', payload).then(function (result) {
+          if (!alive()) return;
+          var end = endOfLink(result.body, result.status);
+          if (end) { failLink(end); return; }
+          var body = result.body || {};
+          var data = body.data || {};
+          if (result.status === 409 && body.error === 'invalid_stage') {
+            /* Already started (the technician tapped Start first): skip T2 and drive the page's current route. */
+            syncStage(body);
+            if (!DRIVING_STAGES[state.stage]) { simTurnOff(); return; }
+            showTrip();
+            begin(state.route && state.route.length >= 2 ? pageRoute() : drawn.pts);
+            return;
+          }
+          if (!result.ok || !body.status) {
+            setNotice('start-notice', body.errorMessage || 'Simulate drive could not start the trip.', true);
+            return;
+          }
+          if (drawn.route) { state.route = drawn.pts; state.routeAt = Date.now(); }
+          state.eta = typeof data.eta_minutes === 'number' ? data.eta_minutes : null;
+          if (data.next_interval_sec) state.interval = data.next_interval_sec;
+          else if (state.detail && state.detail.location_interval_sec) state.interval = state.detail.location_interval_sec;
+          applyStage(data.stage || 'on_the_way');
+          setNotice('start-notice', null);
+          showTrip();
+          setNotice('trip-notice', data.route_accepted === false
+            ? 'Your route could not be used, so the backend drew its own.' : null);
+          state.lastPostAt = Date.now();
+          begin(drawn.pts);
+        });
+      }).catch(function () {
+        if (alive()) setNotice('start-notice', 'Simulate drive could not reach the server. Turn it off and on to retry.', true);
+      });
+    }
+
+    function simTurnOff() {
+      if (!sim.on) return;
+      sim.on = false;
+      sim.run += 1;                      /* any request still in flight is ignored when it lands */
+      simHalt();
+      sim.ready = false; sim.fix = null; sim.pending = [];
+      simSave();                         /* clears the stored switch state */
+      simRender();
+      if (destroyed) return;
+      /* Back to the real GPS path (marker, arrival gate and manual steps read the real position again). Nothing is posted
+         automatically any more: the real poll is deliberately NOT restarted, or it would move the technician to the
+         tester's real location. A reload restores the normal full behaviour. The trip stays as it is on the server. */
+      state.fix = null;
+      state.serverAway = null;
+      updateGate();
+      watchPermission();
+      if (DRIVING_STAGES[state.stage]) {
+        watchPosition();
+        setNotice('trip-notice', 'Simulation is off. Location is not being shared until you reload this page.');
+      }
+      askLocation();
+    }
+
+    function simResume() {
+      if (!SHOW_TEST_SWITCH || demo || sim.on) return;
+      var saved = simLoad();
+      if (saved && saved.on) simTurnOn(saved);
+    }
+
+    function simBuildUi() {
+      if (!SHOW_TEST_SWITCH || demo) return;
+      var box = document.createElement('div');
+      box.id = 'sim-switch';
+      box.setAttribute('style', 'position:fixed;left:10px;bottom:10px;z-index:2000;display:flex;flex-direction:column;' +
+        'align-items:flex-start;gap:6px;font:600 12px/1.2 system-ui,-apple-system,sans-serif');
+      var badge = document.createElement('div');
+      badge.id = 'sim-badge';
+      badge.textContent = 'SIMULATED DRIVE';
+      badge.setAttribute('style', 'display:none;background:#d93025;color:#fff;letter-spacing:.08em;padding:4px 10px;' +
+        'border-radius:6px;box-shadow:0 1px 6px rgba(0,0,0,.35)');
+      var label = document.createElement('label');
+      label.setAttribute('style', 'display:flex;align-items:center;gap:8px;background:rgba(24,24,24,.86);color:#fff;' +
+        'padding:6px 12px;border-radius:999px;cursor:pointer;box-shadow:0 1px 6px rgba(0,0,0,.35)');
+      var input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = 'sim-toggle';
+      input.setAttribute('style', 'margin:0');
+      label.appendChild(input);
+      label.appendChild(document.createTextNode('Test: simulate drive'));
+      box.appendChild(badge);
+      box.appendChild(label);
+      document.body.appendChild(box);
+      injected.push(box);                 /* removed again on teardown */
+      sim.toggle = input;
+      sim.badge = badge;
+      input.addEventListener('change', function () { if (input.checked) simTurnOn(null); else simTurnOff(); });
     }
 
     /* ---------------- T5: arrival OTP ---------------- */
@@ -1362,9 +1744,126 @@ function boot(options) {
       if (uploaded >= total) text('photos-copy', 'All photos uploaded. Tap Complete job to close it.');
     }
 
+    /* ---- Live camera: photos must be taken at that moment, so the normal path is an in-page getUserMedia sheet, not
+       a file chooser (which lets the technician pick an old gallery picture). The stream is local to this page and the
+       frame goes through uploadPhoto() like before. #camera (file input) is only the fallback when getUserMedia is
+       unavailable (and in demo mode, which never touches the camera). */
+    var camera = { stream: null, token: 0, open: false, capturing: false };
+    var CAMERA_NO_API_COPY = 'This browser cannot open the camera here. Allow camera access, or reload and try again.';
+    var CAMERA_BLOCKED_COPY = 'Camera access is blocked. Allow the camera for this page in your browser\'s site settings, then try again.';
+    var CAMERA_NONE_COPY = 'No camera was found on this device.';
+    var CAMERA_BUSY_COPY = 'The camera could not be started. Close other apps using it, then try again.';
+
+    function cameraSupported() {
+      return !!(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function');
+    }
+
+    /* Stop every track of a stream; used for the live stream and for one that arrives after the sheet was closed. */
+    function stopStream(stream) {
+      if (!stream) return;
+      stream.getTracks().forEach(function (track) { try { track.stop(); } catch (error) { /* already ended */ } });
+    }
+
+    /* Close the sheet for any reason (shot taken, cancel, error, teardown, page hidden). Bumping the token makes a
+       getUserMedia() that is still pending stop its stream when it resolves instead of attaching it. */
+    function closeCamera() {
+      camera.token += 1;
+      camera.open = false;
+      camera.capturing = false;
+      var stream = camera.stream;
+      camera.stream = null;
+      stopStream(stream);
+      var video = byId('camera-preview');
+      if (video) { try { video.pause(); } catch (error) { /* ignore */ } video.srcObject = null; }
+      var shutter = byId('camera-shutter');
+      if (shutter) shutter.disabled = true;
+      if (byId('camera-sheet')) hide('camera-sheet');
+    }
+
+    /* Close the sheet and report why in the photos notice (the sheet itself has no room for a message). */
+    function cameraFailed(message) {
+      closeCamera();
+      setNotice('photos-notice', message, true);
+    }
+
+    function cameraErrorCopy(error) {
+      var name = error && error.name;
+      if (name === 'NotAllowedError' || name === 'SecurityError') return CAMERA_BLOCKED_COPY;
+      if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') return CAMERA_NONE_COPY;
+      return CAMERA_BUSY_COPY;
+    }
+
+    /* Rear camera at 720p when possible; a missing or over-constrained camera gets one retry with plain video. */
+    function requestCameraStream() {
+      var devices = navigator.mediaDevices;
+      return devices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      }).catch(function (error) {
+        var name = error && error.name;
+        if (name === 'NotFoundError' || name === 'OverconstrainedError') return devices.getUserMedia({ video: true });
+        throw error;
+      });
+    }
+
+    function openCamera() {
+      camera.token += 1;
+      var token = camera.token;
+      camera.open = true;
+      byId('camera-shutter').disabled = true;
+      show('camera-status');
+      show('camera-sheet');
+      var video = byId('camera-preview');
+
+      function frameReady() {
+        if (token !== camera.token || !video.videoWidth) return;
+        hide('camera-status');
+        byId('camera-shutter').disabled = false;
+      }
+
+      requestCameraStream().then(function (stream) {
+        if (destroyed || token !== camera.token) { stopStream(stream); return; }
+        camera.stream = stream;
+        video.onloadedmetadata = frameReady;
+        video.srcObject = stream;
+        var playing = video.play();
+        if (playing && typeof playing.then === 'function') playing.then(frameReady, noop);
+      }).catch(function (error) {
+        if (destroyed || token !== camera.token) return;
+        cameraFailed(cameraErrorCopy(error));
+      });
+    }
+
+    /* Shutter: freeze the current frame at the video's intrinsic size and send it as a JPEG through uploadPhoto(). */
+    function capturePhoto() {
+      var video = byId('camera-preview');
+      if (!camera.open || !camera.stream || camera.capturing || !video.videoWidth) return;
+      camera.capturing = true;
+      byId('camera-shutter').disabled = true;
+      var token = camera.token;
+      var canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(function (blob) {
+        if (destroyed || token !== camera.token) return;
+        if (!blob) { cameraFailed('Could not capture the photo. Try again.'); return; }
+        var file = new File([blob], 'photo-' + Date.now() + '.jpg', { type: 'image/jpeg' });
+        closeCamera();
+        uploadPhoto(file);
+      }, 'image/jpeg', 0.85);
+    }
+
     function takePhoto() {
-      if (state.photoBusy || state.photos.length >= state.minPhotos) return;
-      byId('camera').click();
+      if (state.photoBusy || state.photos.length >= state.minPhotos || camera.open) return;
+      setNotice('photos-notice', null);
+      if (demo) { byId('camera').click(); return; }
+      if (!cameraSupported()) {
+        setNotice('photos-notice', CAMERA_NO_API_COPY, true);
+        byId('camera').click();
+        return;
+      }
+      openCamera();
     }
 
     function uploadPhoto(file) {
@@ -1471,6 +1970,8 @@ function boot(options) {
       });
     }
 
+    function stopCameraWhenHidden() { if (document.hidden) closeCamera(); }
+
     function startPage() {
       if (!demo && !jobToken && !jobId) {
         showError('Use the link WhatsApp sent you, or ask the ops team for a fresh link.');
@@ -1488,12 +1989,17 @@ function boot(options) {
       byId('peek-reached').addEventListener('click', markReached);
       byId('complete').addEventListener('click', completeJob);
       byId('take-photo').addEventListener('click', takePhoto);
+      byId('camera-shutter').addEventListener('click', capturePhoto);
+      byId('camera-cancel').addEventListener('click', closeCamera);
       byId('camera').addEventListener('change', function (event) {
         var file = event.target.files && event.target.files[0];
         event.target.value = '';
         uploadPhoto(file);
       });
       bindSheet();
+      /* safety stop: a camera must never stay on once the page is hidden or leaves */
+      document.addEventListener('visibilitychange', stopCameraWhenHidden);
+      addWindowListener('pagehide', closeCamera);
   
       if (demo) {
         state.detail = JSON.parse(JSON.stringify(DEMO_DETAIL));
@@ -1537,6 +2043,7 @@ function boot(options) {
         renderDetails(state.detail);
         applyStage(state.detail.stage || 'assigning');
         hide('loading');
+        simResume();   /* Simulate drive: restore the switch after a reload (no-op unless it was on) */
         if ((state.detail.stage || 'assigning') === 'assigning') {
           show('assigning-body');
           return;
@@ -1576,13 +2083,17 @@ function boot(options) {
       document.head.appendChild(script);
     }
 
+    simBuildUi();   /* Simulate drive switch (testing only; renders nothing when SHOW_TEST_SWITCH is false) */
     withLeaflet(startPage);
 
     return function teardown() {
       if (destroyed) return;
       destroyed = true;
+      closeCamera();
+      document.removeEventListener('visibilitychange', stopCameraWhenHidden);
       if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
       stopWatch();
+      simHalt();
       if (permissionStatus) { permissionStatus.onchange = null; permissionStatus = null; }
       windowListeners.forEach(function (entry) { window.removeEventListener(entry[0], entry[1]); });
       windowListeners = [];

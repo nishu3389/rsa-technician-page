@@ -109,6 +109,24 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job .gate-card p { margin: 0; font-size: 15px; }
 #rsa-job .gate.error .gate-title { color: #8f1d1d; }
 #rsa-job .gate-btn { display: block; width: 100%; min-height: 48px; margin: 16px 0 0; padding: 0 18px; border-radius: 14px; background: #f9c22e; color: #101820; font-size: 16px; font-weight: 700; text-align: center; }
+/* live camera sheet: full-screen over the page. z 500 sits above the trip sheet (18), header (20) and ETA pill (15)
+   and below the location gate (1000), so a lost location permission still blocks the page on top of the camera */
+#rsa-job .camera { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 500; background: #000; color: #fff; }
+#rsa-job .camera video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+#rsa-job .camera-status { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); text-align: center; font-size: 15px; font-weight: 600; }
+#rsa-job .camera-cancel {
+  position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px; min-width: 44px; min-height: 44px; padding: 0 18px;
+  border-radius: 999px; background: rgba(16, 24, 32, .65); color: #fff; font-size: 15px; font-weight: 700;
+}
+#rsa-job .camera-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 36px 16px calc(24px + env(safe-area-inset-bottom)); background: linear-gradient(to top, rgba(0, 0, 0, .6), rgba(0, 0, 0, 0));
+}
+#rsa-job .camera-help { margin: 0; font-size: 13px; text-align: center; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+#rsa-job .camera-shutter { width: 72px; height: 72px; padding: 0; border-radius: 50%; background: transparent; border: 4px solid #fff; display: flex; align-items: center; justify-content: center; }
+#rsa-job .camera-shutter span { display: block; width: 56px; height: 56px; border-radius: 50%; background: #f9c22e; }
+#rsa-job .camera-shutter:active span { background: #fff; }
+#rsa-job .camera-shutter[disabled] { opacity: .4; }
 #rsa-job .hidden { display: none !important; }
 
 /* ---------- OTP ---------- */

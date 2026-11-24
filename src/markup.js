@@ -4,16 +4,24 @@ const markup = `<header>
   <span class="stage hidden" id="stage-pill"></span>
 </header>
 
-<section id="view-assigning">
-  <div class="gate hidden" id="location-gate" role="alertdialog" aria-modal="true" aria-labelledby="location-gate-title" aria-describedby="location-gate-text">
-    <div class="gate-card">
-      <h2 class="gate-title" id="location-gate-title">Location needed</h2>
-      <p id="location-gate-text">Location is needed for this trip. Allow location for this page to start.</p>
-      <button class="gate-btn" id="allow-location" type="button">Allow location</button>
-      <button class="gate-btn hidden" id="reload-page" type="button">Reload page</button>
-    </div>
+<div class="gate hidden" id="location-gate" role="alertdialog" aria-modal="true" aria-labelledby="location-gate-title" aria-describedby="location-gate-text">
+  <div class="gate-card">
+    <h2 class="gate-title" id="location-gate-title">Location needed</h2>
+    <p id="location-gate-text">Location is needed for this trip. Allow location for this page to start.</p>
+    <button class="gate-btn" id="allow-location" type="button">Allow location</button>
+    <button class="gate-btn hidden" id="reload-page" type="button">Reload page</button>
   </div>
-
+</div>
+<div class="camera hidden" id="camera-sheet" role="dialog" aria-modal="true" aria-label="Take photo">
+  <video id="camera-preview" autoplay playsinline muted></video>
+  <div class="camera-status" id="camera-status">Starting camera&hellip;</div>
+  <button class="camera-cancel" id="camera-cancel" type="button">Cancel</button>
+  <div class="camera-bar">
+    <p class="camera-help">Photos are taken live from the camera.</p>
+    <button class="camera-shutter" id="camera-shutter" type="button" aria-label="Take photo" disabled><span></span></button>
+  </div>
+</div>
+<section id="view-assigning">
   <div class="card state" id="loading">Loading the job&hellip;</div>
 
   <div class="card state hidden" id="error">
