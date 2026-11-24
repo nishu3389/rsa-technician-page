@@ -208,18 +208,22 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 
 #rsa-job header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 20;
-  background: #101820; color: #fff; padding: 14px 18px 12px;
-  padding-top: calc(14px + env(safe-area-inset-top));
+  background: #101820; color: #fff;
+  /* a standard Android toolbar: 56px of content below the status-bar inset, title and actions on one row */
+  height: calc(56px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 12px 0 16px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "brand stage sim" "title stage sim";
+  align-content: center; align-items: center; column-gap: 10px;
 }
-#rsa-job header .brand { font-size: 11px; letter-spacing: .10em; text-transform: uppercase; color: #9fb0c0; }
-#rsa-job header h1 { margin: 3px 0 0; font-size: 19px; font-weight: 600; }
+#rsa-job header .brand { grid-area: brand; font-size: 10px; line-height: 13px; letter-spacing: .10em; text-transform: uppercase; color: #9fb0c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#rsa-job header h1 { grid-area: title; margin: 1px 0 0; font-size: 17px; line-height: 21px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #rsa-job header .stage {
-  display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px;
-  background: #f9c22e; color: #101820; font-size: 12px; font-weight: 700;
+  grid-area: stage; justify-self: end; display: inline-block; margin: 0; padding: 3px 10px; border-radius: 999px;
+  background: #f9c22e; color: #101820; font-size: 12px; font-weight: 700; white-space: nowrap;
 }
 
 /* ---------- start / details view ---------- */
-#rsa-job #view-assigning { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 118px 14px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+#rsa-job #view-assigning { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: calc(var(--rsa-header-h, 56px) + 16px) 14px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #rsa-job .start {
   display: flex; align-items: center; justify-content: center; gap: 10px;
   width: 100%; height: 68px; border-radius: 16px; background: #f9c22e; color: #101820;
@@ -262,13 +266,13 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   font-size: 13px; font-weight: 700; box-shadow: 0 1px 6px rgba(16, 24, 32, .3);
 }
 #rsa-job #gps-pill {
-  position: absolute; top: calc(var(--rsa-header-h, 84px) + env(safe-area-inset-top) + 50px); left: 50%; transform: translateX(-50%);
+  position: absolute; top: calc(var(--rsa-header-h, 56px) + env(safe-area-inset-top) + 50px); left: 50%; transform: translateX(-50%);
   z-index: 15; max-width: calc(100% - 32px); background: #8f1d1d; color: #fff; border-radius: 999px; padding: 7px 14px;
   font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   box-shadow: 0 2px 10px rgba(16, 24, 32, .25);
 }
 #rsa-job #eta-pill {
-  position: absolute; top: calc(var(--rsa-header-h, 84px) + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  position: absolute; top: calc(var(--rsa-header-h, 56px) + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
   z-index: 15; display: flex; align-items: center; gap: 8px;
   background: #fff; border-radius: 999px; padding: 9px 16px;
   box-shadow: 0 2px 12px rgba(16, 24, 32, .18); font-weight: 600; white-space: nowrap;
@@ -276,7 +280,7 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job #eta-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #f9c22e; }
 #rsa-job #sheet {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 18;
-  height: 90vh; background: #fff; border-radius: 20px 20px 0 0;
+  height: calc(100% - var(--rsa-header-h, 56px)); background: #fff; border-radius: 20px 20px 0 0;   /* open, it stops under the toolbar so its handle stays reachable */
   box-shadow: 0 -2px 18px rgba(16, 24, 32, .18);
   display: flex; flex-direction: column;
   transform: translateY(var(--peek, 62vh)); transition: transform .25s ease-out;
@@ -307,7 +311,7 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job #sheet.open #peek-lock { display: none; }
 #rsa-job #sheet:not(.open) #arrive-block #arrive-lock { display: none; }
 #rsa-job #sheet:not(.open) #arrive-block #reached { display: none; }
-#rsa-job .sheet-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 20px 28px; }
+#rsa-job .sheet-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 4px 20px 28px; }
 #rsa-job .sheet-body .card { box-shadow: none; padding: 14px 0; margin: 0; border-bottom: 1px solid #f0f2f4; border-radius: 0; }
 #rsa-job .sheet-body .card:last-of-type { border-bottom: 0; }
 #rsa-job .action { width: 100%; height: 56px; border-radius: 14px; background: #101820; color: #fff; font-size: 16px; font-weight: 700; margin-top: 14px; }
@@ -378,7 +382,8 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 
 /* Google Maps Platform. options.googleMapsKey needs the Maps JavaScript API; options.googleRoutesKey the Routes API
    (it falls back to the map key, so one key with both APIs also works). Restrict both to this site's HTTP referrers. Billable use per trip: one map load per page open and one
-   Routes call at Start trip (never on reload: the route is kept in sessionStorage). */
+   Routes call at Start trip. A reload or a new tab reuses the stored route; only when none is stored is one more
+   fetched (ensureRoute, at most ROUTE_RETRY_MAX per page load). */
 var GOOGLE_MAPS_JS = 'https://maps.googleapis.com/maps/api/js';
 var GOOGLE_ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 var MAPS_LOAD_TIMEOUT_MS = 12000;
@@ -389,7 +394,10 @@ var FOLLOW_ZOOM = 17;                 /* street level while following the techni
 var GPS_LOST_MS = 30000;              /* no fix for this long while tracking = "GPS signal lost" */
 var HEADING_MIN_SPEED_MS = 1.5;       /* trust the GPS heading only above ~5 km/h */
 var HEADING_MIN_MOVE_M = 10;          /* otherwise derive it from positions at least this far apart */
-var ROUTE_STORAGE_KEY = 'rsa_route';  /* sessionStorage: the Start-trip route, restored after a reload */
+var ROUTE_STORAGE_KEY = 'rsa_route';  /* localStorage: the trip route, restored after a reload or in a new tab */
+var ROUTE_MAX_AGE_MS = 12 * 3600 * 1000;   /* a stored route older than this is dropped */
+var ROUTE_RETRY_MAX = 3;              /* route fetches per page load when the route is missing */
+var ROUTE_RETRY_MS = 30000;           /* wait between those fetches after a failure */
 
 /* Text on the map markers. */
 var MARKER_LABEL_CUSTOMER = 'Customer';
@@ -456,6 +464,7 @@ function boot(options) {
     var header = document.querySelector('#rsa-job header');
     var height = header ? header.offsetHeight : 0;
     if (height > 0) root.style.setProperty('--rsa-header-h', height + 'px');
+    if (typeof sheet !== 'undefined' && sheet) setSheetState(sheetState);   /* the sheet's height follows the toolbar's */
   }
   syncHeaderHeight();
   addWindowListener('resize', syncHeaderHeight);
@@ -1238,18 +1247,8 @@ function boot(options) {
     function drawRouteLine() {
       if (!map) return;
       clearRouteLines();
-      var pin = pinLatLng();
-      if ((!state.route || state.route.length < 2) && state.fix && pin) {
-        // No route yet (reloaded mid-trip on another device, or the route was refused): a dashed line beats an empty map.
-        routeLines.push(new G.Polyline({
-          map: map,
-          path: [pin, latLng(state.fix.latitude, state.fix.longitude)],
-          strokeOpacity: 0,
-          icons: [{ icon: { path: 'M 0,-1 0,1', strokeColor: '#5f6b76', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '14px' }],
-          clickable: false
-        }));
-        return;
-      }
+      /* Only a real road route is ever drawn. Without one the map shows just the two markers while ensureRoute()
+         fetches it; a straight or dashed line would point the technician across buildings. */
       if (!state.route || state.route.length < 2) return;
       var path = state.route.map(function (point) { return latLng(point[0], point[1]); });
       routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#ffffff', strokeOpacity: 0.95, strokeWeight: 9, zIndex: 1, clickable: false }));
@@ -1379,6 +1378,7 @@ function boot(options) {
         }
       }
       if (follow) followTech();
+      ensureRoute();
     }
 
     /* Keep the map's bottom edge at the sheet's top edge, so nothing the technician needs (their marker, Google's
@@ -1496,12 +1496,47 @@ function boot(options) {
 
     function routeKey() { return ROUTE_STORAGE_KEY + ':' + (jobToken || jobId || ''); }
 
+    /* localStorage, not sessionStorage: re-opening the WhatsApp link opens a new tab, which must still find the route. */
     function saveRoute(polyline) {
-      try { window.sessionStorage.setItem(routeKey(), polyline); } catch (error) { /* storage blocked: a reload shows the dashed line */ }
+      try {
+        window.localStorage.setItem(routeKey(), JSON.stringify({ polyline: polyline, at: Date.now() }));
+      } catch (error) { /* storage blocked: ensureRoute() fetches it again after a reload */ }
     }
 
     function loadRoute() {
-      try { return window.sessionStorage.getItem(routeKey()) || ''; } catch (error) { return ''; }
+      try {
+        var raw = window.localStorage.getItem(routeKey());
+        var saved = raw ? JSON.parse(raw) : null;
+        if (!saved || typeof saved.polyline !== 'string') return '';
+        if (Date.now() - (saved.at || 0) > ROUTE_MAX_AGE_MS) { window.localStorage.removeItem(routeKey()); return ''; }
+        return saved.polyline;
+      } catch (error) { return ''; }
+    }
+
+    /* No route while driving to the customer (Start-trip Routes call failed, storage empty or blocked, trip started
+       before this page version): fetch one from the current position. Display only - start_journey has already gone,
+       so it is not posted. Bounded: one request at a time, at most ROUTE_RETRY_MAX per page load, ROUTE_RETRY_MS apart. */
+    var routeFetch = { busy: false, tries: 0, nextAt: 0 };
+
+    function ensureRoute() {
+      if (demo || destroyed || sim.on || !ARRIVAL_STAGES[state.stage]) return;
+      if ((state.route && state.route.length >= 2) || routeFetch.busy || routeFetch.tries >= ROUTE_RETRY_MAX) return;
+      if (!state.fix || Date.now() < routeFetch.nextAt) return;
+      var pin = (state.detail && state.detail.customer_location) || null;
+      if (!pin) return;
+      routeFetch.busy = true;
+      routeFetch.tries += 1;
+      drawRoute(state.fix, pin).then(function (route) {
+        routeFetch.busy = false;
+        var points = route ? decodePolyline(route.route_polyline) : [];
+        if (points.length < 2) { routeFetch.nextAt = Date.now() + ROUTE_RETRY_MS; return; }
+        if (state.route && state.route.length >= 2) return;   /* another path got there first */
+        state.route = points;
+        state.routeAt = Date.now();
+        saveRoute(route.route_polyline);
+        drawRouteLine();
+        if (!follow) frameMap();
+      });
     }
 
     /* ---------------- copy address ---------------- */
@@ -1540,7 +1575,7 @@ function boot(options) {
     var PEEK_OFFSET = 0.62;
     var HANDLE_FALLBACK_H = 44;           /* px of the closed strip when it cannot be measured */
     var sheet = byId('sheet');
-    var dragStartY = null, dragStartOffset = null, dragMoved = false;
+    var dragStartY = null, dragStartOffset = null, dragCurrent = null, dragMoved = false;
     /* 'open' = full details, 'peek' = summary (default), 'closed' = only the labelled handle, so the map gets the screen. */
     var sheetState = 'peek';
     var sheetSummary = '';                /* the important detail shown in the closed handle: "4 min \u00b7 1.2 km away" */
@@ -1548,6 +1583,7 @@ function boot(options) {
 
     function sheetHeight() { return sheet.offsetHeight || window.innerHeight * 0.9; }
     function peekOffset() { return Math.round(sheetHeight() * PEEK_OFFSET); }
+    function offsetFor(name) { return name === 'open' ? 0 : (name === 'closed' ? closedOffset() : peekOffset()); }
     function closedOffset() { return Math.round(sheetHeight() - (byId('sheet-grab').offsetHeight || HANDLE_FALLBACK_H)); }
 
     /* The handle always says what tapping it does. */
@@ -1590,7 +1626,8 @@ function boot(options) {
       function start(event) {
         var point = event.touches ? event.touches[0] : event;
         dragStartY = point.clientY;
-        dragStartOffset = currentOffset();
+        dragStartOffset = offsetFor(sheetState);
+        dragCurrent = dragStartOffset;
         dragMoved = false;
         sheet.classList.add('dragging');
       }
@@ -1599,14 +1636,16 @@ function boot(options) {
         var point = event.touches ? event.touches[0] : event;
         var delta = point.clientY - dragStartY;
         if (Math.abs(delta) > 4) dragMoved = true;
-        sheet.style.setProperty('--peek', Math.min(Math.max(dragStartOffset + delta, 0), closedOffset()) + 'px');
+        dragCurrent = Math.min(Math.max(dragStartOffset + delta, 0), closedOffset());
+        sheet.style.setProperty('--peek', dragCurrent + 'px');
         if (event.cancelable) event.preventDefault();
       }
       function end() {
         if (dragStartY === null) return;
-        var offset = currentOffset();
+        var offset = dragCurrent !== null ? dragCurrent : offsetFor(sheetState);
         sheet.classList.remove('dragging');
         dragStartY = null;
+        dragCurrent = null;
         if (!dragMoved) return;      /* a tap, not a drag: the click handlers below decide */
         /* snap to the nearest of the three resting positions */
         var targets = [['open', 0], ['peek', peekOffset()], ['closed', closedOffset()]];
@@ -1619,8 +1658,24 @@ function boot(options) {
         element.addEventListener('touchstart', start, { passive: true });
         element.addEventListener('touchmove', move, { passive: false });
         element.addEventListener('touchend', end);
+        element.addEventListener('touchcancel', end);
         element.addEventListener('mousedown', start);
       });
+      /* An open sheet can also be pulled down from its content: when the content is scrolled to the top, a downward
+         swipe moves the sheet instead of scrolling. */
+      var bodyEl = byId('sheet-body'), bodyY = null, bodyPull = false;
+      bodyEl.addEventListener('touchstart', function (e) { bodyY = e.touches[0].clientY; bodyPull = false; }, { passive: true });
+      bodyEl.addEventListener('touchmove', function (e) {
+        if (bodyY === null) return;
+        if (!bodyPull) {
+          if (sheetState === 'open' && bodyEl.scrollTop <= 0 && e.touches[0].clientY - bodyY > 8) { bodyPull = true; start({ touches: [{ clientY: bodyY }] }); }
+          else return;
+        }
+        move(e);
+      }, { passive: false });
+      function bodyEnd() { if (bodyPull) { bodyPull = false; end(); } bodyY = null; }
+      bodyEl.addEventListener('touchend', bodyEnd);
+      bodyEl.addEventListener('touchcancel', bodyEnd);
       addWindowListener('mousemove', move);
       addWindowListener('mouseup', end);
       /* tap the handle: hide the sheet down to the handle, or bring it back */
@@ -1645,6 +1700,9 @@ function boot(options) {
       byId('view-assigning').style.display = 'none';
       byId('view-trip').style.display = 'block';
       tripShown = true;
+      /* decide follow before the map is built: building it in overview first leaves a pending fitBounds that lands after
+         (and undoes) the follow zoom below */
+      follow = !!ARRIVAL_STAGES[state.stage];
       buildMap();
       moveTech();
       setSheet(false);
@@ -1826,6 +1884,8 @@ function boot(options) {
     function simRender() {
       if (sim.toggle) sim.toggle.checked = sim.on;
       if (sim.badge) sim.badge.style.display = sim.on ? 'block' : 'none';
+      var brand = root.querySelector('header .brand');
+      if (brand) brand.style.display = sim.on ? 'none' : '';
     }
 
     function simHalt() {
@@ -1991,10 +2051,11 @@ function boot(options) {
       /* Start driving along `pts` (a straight line when no road route could be had). */
       function begin(pts) {
         if (!alive()) return;
-        if (!pts || pts.length < 2) pts = line(startAt);
+        var straight = !pts || pts.length < 2;
+        if (straight) pts = line(startAt);   /* the virtual driver still moves, but a straight line is never drawn */
         simSetRoute(pts);
         if (resume) sim.dist = simNearest(startAt);   /* resume from the route point nearest the last position */
-        state.route = pts;
+        if (!straight) state.route = pts;
         drawRouteLine();
         simDrive();
       }
@@ -2073,27 +2134,40 @@ function boot(options) {
       if (!header) return;
       var box = document.createElement('div');
       box.id = 'sim-switch';
-      box.setAttribute('style', 'position:absolute;right:14px;top:calc(12px + env(safe-area-inset-top));display:flex;' +
-        'flex-direction:column;align-items:flex-end;gap:6px;font:600 11px/1.2 system-ui,-apple-system,sans-serif');
+      box.setAttribute('style', 'grid-area:sim;justify-self:end;display:flex;align-items:center;min-width:0;' +
+        'font:600 11px/1.2 system-ui,-apple-system,sans-serif');
       var label = document.createElement('label');
-      label.setAttribute('style', 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.14);color:#fff;' +
-        'padding:5px 10px;border-radius:999px;cursor:pointer;white-space:nowrap');
+      label.title = 'Test: simulate drive';
+      label.setAttribute('style', 'display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.14);color:#fff;' +
+        'padding:5px 9px;border-radius:999px;cursor:pointer;white-space:nowrap');
       var input = document.createElement('input');
       input.type = 'checkbox';
       input.id = 'sim-toggle';
+      input.setAttribute('aria-label', 'Test: simulate drive');
       input.setAttribute('style', 'margin:0');
+      var text = document.createElement('span');
+      function setText() {   /* shorter on a phone: the toolbar is one row, and the labels must never run into each other */
+        var w = window.innerWidth;
+        text.textContent = w >= 640 ? 'Test: simulate drive' : (w >= 360 ? 'Test drive' : 'Sim');
+        if (sim.badge) sim.badge.textContent = w >= 360 ? 'SIMULATED DRIVE' : 'SIMULATED';
+      }
+      addWindowListener('resize', setText);
       label.appendChild(input);
-      label.appendChild(document.createTextNode('Test: simulate drive'));
+      label.appendChild(text);
+      box.appendChild(label);
+      /* while it is on, this red label takes the place of the brand line above the title */
       var badge = document.createElement('div');
       badge.id = 'sim-badge';
       badge.textContent = 'SIMULATED DRIVE';
-      badge.setAttribute('style', 'display:none;background:#d93025;color:#fff;letter-spacing:.08em;padding:3px 9px;border-radius:6px');
-      box.appendChild(label);
-      box.appendChild(badge);
+      badge.setAttribute('style', 'grid-area:brand;display:none;align-self:center;justify-self:start;background:#d93025;color:#fff;' +
+        'font:700 10px/13px system-ui,-apple-system,sans-serif;letter-spacing:.08em;padding:1px 8px;border-radius:999px;white-space:nowrap;' +
+        'min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis');
+      header.appendChild(badge);
       header.appendChild(box);
-      injected.push(box);                 /* removed again on teardown */
+      injected.push(box, badge);          /* removed again on teardown */
       sim.toggle = input;
       sim.badge = badge;
+      setText();
       input.addEventListener('change', function () { if (input.checked) simTurnOn(null); else simTurnOff(); });
     }
 
@@ -2604,8 +2678,8 @@ function boot(options) {
           return;
         }
         // Reloaded mid-trip (or the job moved on): go straight back to the map and let the location poll rebuild the
-        // ETA instead of offering Start Trip again. The Start-trip route comes back from this tab's storage (or the job
-        // payload, if the backend sends it) - never a new Routes call, which would be billed on every reload.
+        // ETA instead of offering Start Trip again. The route comes back from storage (or the job payload, if the
+        // backend sends it); only when neither has it does ensureRoute() fetch one from the first fix.
         if (DRIVING_STAGES[state.stage] && (!state.route || state.route.length < 2)) {
           var keptRoute = loadRoute() || (typeof state.detail.route_polyline === 'string' ? state.detail.route_polyline : '');
           var keptPoints = keptRoute ? decodePolyline(keptRoute) : [];

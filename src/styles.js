@@ -14,18 +14,22 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 
 #rsa-job header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 20;
-  background: #101820; color: #fff; padding: 14px 18px 12px;
-  padding-top: calc(14px + env(safe-area-inset-top));
+  background: #101820; color: #fff;
+  /* a standard Android toolbar: 56px of content below the status-bar inset, title and actions on one row */
+  height: calc(56px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 12px 0 16px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "brand stage sim" "title stage sim";
+  align-content: center; align-items: center; column-gap: 10px;
 }
-#rsa-job header .brand { font-size: 11px; letter-spacing: .10em; text-transform: uppercase; color: #9fb0c0; }
-#rsa-job header h1 { margin: 3px 0 0; font-size: 19px; font-weight: 600; }
+#rsa-job header .brand { grid-area: brand; font-size: 10px; line-height: 13px; letter-spacing: .10em; text-transform: uppercase; color: #9fb0c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#rsa-job header h1 { grid-area: title; margin: 1px 0 0; font-size: 17px; line-height: 21px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #rsa-job header .stage {
-  display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px;
-  background: #f9c22e; color: #101820; font-size: 12px; font-weight: 700;
+  grid-area: stage; justify-self: end; display: inline-block; margin: 0; padding: 3px 10px; border-radius: 999px;
+  background: #f9c22e; color: #101820; font-size: 12px; font-weight: 700; white-space: nowrap;
 }
 
 /* ---------- start / details view ---------- */
-#rsa-job #view-assigning { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 118px 14px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+#rsa-job #view-assigning { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: calc(var(--rsa-header-h, 56px) + 16px) 14px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 #rsa-job .start {
   display: flex; align-items: center; justify-content: center; gap: 10px;
   width: 100%; height: 68px; border-radius: 16px; background: #f9c22e; color: #101820;
@@ -68,13 +72,13 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   font-size: 13px; font-weight: 700; box-shadow: 0 1px 6px rgba(16, 24, 32, .3);
 }
 #rsa-job #gps-pill {
-  position: absolute; top: calc(var(--rsa-header-h, 84px) + env(safe-area-inset-top) + 50px); left: 50%; transform: translateX(-50%);
+  position: absolute; top: calc(var(--rsa-header-h, 56px) + env(safe-area-inset-top) + 50px); left: 50%; transform: translateX(-50%);
   z-index: 15; max-width: calc(100% - 32px); background: #8f1d1d; color: #fff; border-radius: 999px; padding: 7px 14px;
   font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   box-shadow: 0 2px 10px rgba(16, 24, 32, .25);
 }
 #rsa-job #eta-pill {
-  position: absolute; top: calc(var(--rsa-header-h, 84px) + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  position: absolute; top: calc(var(--rsa-header-h, 56px) + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
   z-index: 15; display: flex; align-items: center; gap: 8px;
   background: #fff; border-radius: 999px; padding: 9px 16px;
   box-shadow: 0 2px 12px rgba(16, 24, 32, .18); font-weight: 600; white-space: nowrap;
@@ -82,7 +86,7 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job #eta-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #f9c22e; }
 #rsa-job #sheet {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 18;
-  height: 90vh; background: #fff; border-radius: 20px 20px 0 0;
+  height: calc(100% - var(--rsa-header-h, 56px)); background: #fff; border-radius: 20px 20px 0 0;   /* open, it stops under the toolbar so its handle stays reachable */
   box-shadow: 0 -2px 18px rgba(16, 24, 32, .18);
   display: flex; flex-direction: column;
   transform: translateY(var(--peek, 62vh)); transition: transform .25s ease-out;
@@ -113,7 +117,7 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job #sheet.open #peek-lock { display: none; }
 #rsa-job #sheet:not(.open) #arrive-block #arrive-lock { display: none; }
 #rsa-job #sheet:not(.open) #arrive-block #reached { display: none; }
-#rsa-job .sheet-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 20px 28px; }
+#rsa-job .sheet-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 4px 20px 28px; }
 #rsa-job .sheet-body .card { box-shadow: none; padding: 14px 0; margin: 0; border-bottom: 1px solid #f0f2f4; border-radius: 0; }
 #rsa-job .sheet-body .card:last-of-type { border-bottom: 0; }
 #rsa-job .action { width: 100%; height: 56px; border-radius: 14px; background: #101820; color: #fff; font-size: 16px; font-weight: 700; margin-top: 14px; }
