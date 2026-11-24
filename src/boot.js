@@ -633,8 +633,8 @@ export default function boot(options) {
       byId('reached').classList.toggle('hidden', lockedNow);
       var line = '';
       if (lockedNow) {
-        line = formatDistance(Math.max(ARRIVE_RADIUS_M + 10, Math.round(state.away / 10) * 10)) +
-          ' to the customer \u00b7 arrival unlocks within ' + ARRIVE_RADIUS_M + ' m';
+        /* the distance is already in the summary line ("8 min \u00b7 1.3 km away"): this line only states the rule */
+        line = '\u201cI have reached\u201d unlocks within ' + ARRIVE_RADIUS_M + ' m';
       }
       ['peek-lock', 'arrive-lock'].forEach(function (id) {
         byId(id).textContent = line;
