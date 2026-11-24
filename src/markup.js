@@ -79,9 +79,10 @@ const markup = `<header>
 <section id="view-trip">
   <div id="map"></div>
   <div id="eta-pill"><span class="dot"></span><span id="eta-text">&mdash;</span></div>
+  <div id="gps-pill" class="hidden" role="status" aria-live="polite"></div>
 
   <div id="sheet">
-    <div class="grab" id="sheet-grab" role="button" aria-label="Drag to show trip details"><span></span></div>
+    <div class="grab" id="sheet-grab" role="button" aria-label="Hide trip details" aria-expanded="true"><span class="bar"></span><div class="grab-title"><svg class="grip" width="12" height="16" viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.5"/><circle cx="9" cy="3" r="1.5"/><circle cx="3" cy="8" r="1.5"/><circle cx="9" cy="8" r="1.5"/><circle cx="3" cy="13" r="1.5"/><circle cx="9" cy="13" r="1.5"/></svg><span class="grab-detail" id="grab-detail"></span><span id="grab-text">Hide trip details</span><span class="chev" id="grab-chev" aria-hidden="true">&#9662;</span></div></div>
     <div class="peek" id="sheet-peek">
       <div class="who" id="peek-name">&mdash;</div>
       <div class="what" id="peek-what">&mdash;</div>
@@ -91,6 +92,7 @@ const markup = `<header>
     <div class="sheet-body" id="sheet-body">
 
       <div class="notice hidden" id="trip-notice"></div>
+      <div class="notice hidden" id="screen-hint">Keep the screen on while driving. Location sharing pauses when the screen locks.</div>
 
       <div class="card hidden" id="arrive-block">
         <h2>Arrival</h2>
@@ -133,6 +135,7 @@ const markup = `<header>
           <span class="value" id="trip-customer-phone"></span>
         </div>
         <p class="address" id="trip-customer-address"></p>
+        <button class="link-btn hidden" id="copy-address" type="button">Copy address</button>
       </div>
 
       <div class="card">

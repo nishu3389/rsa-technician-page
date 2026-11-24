@@ -51,6 +51,7 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job .services { margin: 0; padding-left: 18px; }
 #rsa-job .services li { padding: 2px 0; }
 #rsa-job .address { margin: 8px 0 0; color: #3a444f; }
+#rsa-job .link-btn { margin-top: 8px; padding: 6px 12px; border-radius: 999px; background: #f0f2f4; color: #101820; font-size: 13px; font-weight: 700; }
 #rsa-job .muted { color: #6b7885; }
 #rsa-job .tiny { font-size: 12px; }
 #rsa-job .state { padding: 26px 18px; text-align: center; color: #6b7885; }
@@ -58,11 +59,20 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 
 /* ---------- trip view ---------- */
 #rsa-job #view-trip { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none; }
-/* the map must own a stacking context: Leaflet panes carry z-index 400 and would
-   otherwise paint above the header (20) and the sheet (18) */
+/* the map must own a stacking context so its panes never paint above the header (20) and the sheet (18).
+   Its bottom edge follows the sheet's top edge (boot.js syncMapInset), so Google's logo, terms and the
+   zoom / Re-centre buttons are never hidden under the sheet. */
 #rsa-job #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #e8eaed; z-index: 0; isolation: isolate; }
-#rsa-job .leaflet-container { font-family: inherit; }
-#rsa-job .leaflet-control-attribution { font-size: 9px; }
+#rsa-job .map-btn {
+  margin: 0 10px 10px 0; padding: 0 14px; height: 40px; border-radius: 999px; background: #fff; color: #101820;
+  font-size: 13px; font-weight: 700; box-shadow: 0 1px 6px rgba(16, 24, 32, .3);
+}
+#rsa-job #gps-pill {
+  position: absolute; top: calc(var(--rsa-header-h, 84px) + env(safe-area-inset-top) + 50px); left: 50%; transform: translateX(-50%);
+  z-index: 15; max-width: calc(100% - 32px); background: #8f1d1d; color: #fff; border-radius: 999px; padding: 7px 14px;
+  font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 0 2px 10px rgba(16, 24, 32, .25);
+}
 #rsa-job #eta-pill {
   position: absolute; top: calc(var(--rsa-header-h, 84px) + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
   z-index: 15; display: flex; align-items: center; gap: 8px;
@@ -79,8 +89,17 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   will-change: transform;
 }
 #rsa-job #sheet.dragging { transition: none; }
-#rsa-job .grab { flex: 0 0 auto; padding: 10px 0 6px; display: flex; justify-content: center; touch-action: none; cursor: grab; }
-#rsa-job .grab span { width: 36px; height: 4px; border-radius: 999px; background: #d3d8dd; }
+#rsa-job .grab { flex: 0 0 auto; padding: 8px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 5px; touch-action: none; cursor: grab; }
+#rsa-job .grab .bar { width: 36px; height: 4px; border-radius: 999px; background: #d3d8dd; }
+#rsa-job .grab .grab-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #4a5560; letter-spacing: .02em; max-width: 100%; padding: 0 16px; }
+#rsa-job .grab .grip { flex: none; fill: #9aa4ae; }
+/* closed: the handle carries the important detail (ETA + distance), the label becomes secondary */
+#rsa-job .grab .grab-detail { display: none; color: #101820; font-size: 13px; font-weight: 700; white-space: nowrap; }
+#rsa-job #sheet.closed .grab .grab-detail:not(:empty) { display: inline; }
+#rsa-job #sheet.closed .grab .grab-detail:not(:empty)::after { content: "·"; margin-left: 8px; color: #9aa4ae; font-weight: 400; }
+#rsa-job #sheet.closed .grab #grab-text { color: #6b7885; font-size: 11px; font-weight: 600; white-space: nowrap; }
+#rsa-job .grab .chev { flex: none; font-size: 11px; color: #6b7885; }
+
 #rsa-job .peek { padding: 0 20px 12px; border-bottom: 1px solid #f0f2f4; touch-action: none; }
 #rsa-job .peek .who { font-size: 17px; font-weight: 700; }
 #rsa-job .peek .what { color: #6b7885; font-size: 13px; margin-top: 2px; }

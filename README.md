@@ -17,6 +17,8 @@ The website's code is untouched; this folder shares nothing with it at runtime.
 | `job`         | technician job token (`token` also works)                       |
 | `api`         | main API base (job, location, OTP, reached, complete, retake)   |
 | `upload_api`  | photo-upload API base (defaults to `api`)                       |
+| `maps_key`    | Google Maps browser key: Maps JavaScript API (no key = no map)  |
+| `routes_key`  | Routes API key for the Start-trip route (defaults to `maps_key`) |
 | `ngrok=0`     | don't send `ngrok-skip-browser-warning`                         |
 | `demo=1`      | sample data, no API calls (`&stage=assigning` for details view) |
 

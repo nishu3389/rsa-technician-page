@@ -4,6 +4,8 @@
      ?job=<jobToken>          the technician link token (also accepted: ?token=)
      &api=<url>               main API base, e.g. https://abc.ngrok-free.app/api/
      &upload_api=<url>        photo-upload API base (defaults to &api=)
+     &maps_key=<key>          Google Maps browser key (Maps JavaScript API); without it there is no map
+     &routes_key=<key>        Routes API key for the Start-trip route (defaults to &maps_key=)
      &ngrok=0                 do not add the ngrok-skip-browser-warning header
      ?demo=1                  boot.js demo mode: no API calls, sample data
 
@@ -21,6 +23,8 @@ function pick(name, fallback) {
 var jobToken = (query.get('job') || query.get('token') || cfg.jobToken || '').trim();
 var apiBase = pick('api', cfg.apiBase);
 var uploadApiBase = pick('upload_api', cfg.uploadApiBase) || apiBase;
+var googleMapsKey = pick('maps_key', cfg.googleMapsKey);
+var googleRoutesKey = pick('routes_key', cfg.googleRoutesKey);
 var isDemo = query.get('demo') === '1';
 
 /* ngrok's free tier answers browser requests with an HTML warning page unless this header is present.
@@ -62,7 +66,7 @@ function start() {
     return;
   }
   root.innerHTML = markup;
-  boot({ jobToken: jobToken, apiBase: apiBase, uploadApiBase: uploadApiBase });
+  boot({ jobToken: jobToken, apiBase: apiBase, uploadApiBase: uploadApiBase, googleMapsKey: googleMapsKey, googleRoutesKey: googleRoutesKey });
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

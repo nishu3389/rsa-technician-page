@@ -3,8 +3,24 @@
    purpose, so the repo's modern-JS lint rules are switched off for this file). It has no dependencies of its own:
    the markup is injected as HTML (see markup.js) and this module drives it by element id. */
 
-var LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-var LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+/* Google Maps Platform. options.googleMapsKey needs the Maps JavaScript API; options.googleRoutesKey the Routes API
+   (it falls back to the map key, so one key with both APIs also works). Restrict both to this site's HTTP referrers. Billable use per trip: one map load per page open and one
+   Routes call at Start trip (never on reload: the route is kept in sessionStorage). */
+var GOOGLE_MAPS_JS = 'https://maps.googleapis.com/maps/api/js';
+var GOOGLE_ROUTES_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
+var MAPS_LOAD_TIMEOUT_MS = 12000;
+var MAPS_CALLBACK = '__rsaGoogleMapsReady';
+
+/* Map behaviour while driving. */
+var FOLLOW_ZOOM = 17;                 /* street level while following the technician */
+var GPS_LOST_MS = 30000;              /* no fix for this long while tracking = "GPS signal lost" */
+var HEADING_MIN_SPEED_MS = 1.5;       /* trust the GPS heading only above ~5 km/h */
+var HEADING_MIN_MOVE_M = 10;          /* otherwise derive it from positions at least this far apart */
+var ROUTE_STORAGE_KEY = 'rsa_route';  /* sessionStorage: the Start-trip route, restored after a reload */
+
+/* Text on the map markers. */
+var MARKER_LABEL_CUSTOMER = 'Customer';
+var MARKER_LABEL_TECH = 'You';
 
 /* ---- TESTING ONLY: "Simulate drive" switch. Everything for it is behind SHOW_TEST_SWITCH: set it to false and the switch is
    not rendered and the page behaves exactly as before. (Search for "Simulate drive" to find every piece.) ---- */
@@ -38,13 +54,19 @@ export default function boot(options) {
   var uploadApiBase = String(options.uploadApiBase || '') || apiBase;
   if (uploadApiBase && uploadApiBase.charAt(uploadApiBase.length - 1) !== '/') uploadApiBase += '/';
   var UPLOAD_API = uploadApiBase + 'v1/rsa/technician/';
+  /* Browser key for Google Maps (map) and the Routes API (route at Start trip). Without it the page has no map and the
+     backend draws the route. */
+  var mapsKey = String(options.googleMapsKey || '').trim();
+  var routesKey = String(options.googleRoutesKey || '').trim() || mapsKey;
 
   var destroyed = false;
   var injected = [];
   var windowListeners = [];
   var headerObserver = null;
   var objectUrls = [];
-  var L = null;
+  var G = null;   /* window.google.maps once loaded; null when the map could not be loaded */
+  var previousAuthFailure = window.gm_authFailure;
+  var gpsTimer = null;
   var initialMarkup = root.innerHTML;
   var previousOverflow = document.body.style.overflow;
   document.body.style.overflow = 'hidden';
@@ -142,7 +164,10 @@ export default function boot(options) {
       eta: null,
       route: [],
       fix: null,
-      away: null,       /* metres to the customer, or null when unknown (the gate then stays open) */
+      heading: null,    /* direction of travel in degrees from north, or null while unknown */
+      lastFixAt: 0,     /* Date.now() of the last fix (real or simulated) */
+      watchStartedAt: 0,
+      away: null,      /* metres to the customer, or null when unknown (the gate then stays open) */
       locked: null,     /* null until a distance is first known; then true/false */
       serverAway: null,
       routeAt: 0,
@@ -161,6 +186,7 @@ export default function boot(options) {
       gateClosed: false      /* error / closed-link / finished job: the location banner has no business on screen */
     };
     var permissionStatus = null;
+    var reachedWasOffered = false;   /* renderGate: was "I have reached" on offer at the last render */
     var gateOverflow = null;  /* body overflow captured while the location dialog is up; null when it is down */
     /* Simulate drive (testing only, see SHOW_TEST_SWITCH). Inert unless `on`. */
     var sim = {
@@ -475,21 +501,38 @@ export default function boot(options) {
       return points;
     }
 
-    /* The page draws the trip route once at Start (T2); the backend stores it and serves it to the customer. */
+    /* The page draws the trip route once at Start (T2) with the Google Routes API; the backend stores it and serves it
+       to the customer. Any failure (no key, API not enabled, network) resolves null: the trip starts without a route
+       and the backend draws its own. TRAFFIC_UNAWARE keeps the call on the cheaper Essentials SKU. */
     function drawRoute(from, to) {
       if (!from || !to || to.latitude === undefined || to.longitude === undefined) return Promise.resolve(null);
+      if (!routesKey) return Promise.resolve(null);
       if (destroyed) return halted();
-      var url = 'https://router.project-osrm.org/route/v1/driving/' +
-        from.longitude + ',' + from.latitude + ';' + to.longitude + ',' + to.latitude +
-        '?overview=full&geometries=polyline&alternatives=false&steps=false';
+      function point(at) { return { location: { latLng: { latitude: Number(at.latitude), longitude: Number(at.longitude) } } }; }
       /* Third-party origin: plain fetch, no auth headers or credentials. The job token must never go to a third-party origin. */
-      return fetch(url, { headers: { 'Accept': 'application/json' } }).then(readJson).then(function (result) {
+      return fetch(GOOGLE_ROUTES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': routesKey,
+          'X-Goog-FieldMask': 'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline'
+        },
+        body: JSON.stringify({
+          origin: point(from),
+          destination: point(to),
+          travelMode: 'DRIVE',
+          routingPreference: 'TRAFFIC_UNAWARE',
+          polylineEncoding: 'ENCODED_POLYLINE'
+        })
+      }).then(readJson).then(function (result) {
         var route = result.ok && result.body && result.body.routes && result.body.routes[0];
-        if (!route) return null;
+        var encoded = route && route.polyline && route.polyline.encodedPolyline;
+        if (!encoded) return null;
+        var seconds = parseInt(String(route.duration || '0').replace(/s$/, ''), 10) || 0;
         return {
-          route_polyline: route.geometry,
-          route_distance_meters: Math.round(route.distance),
-          route_duration_minutes: Math.max(1, Math.round(route.duration / 60)),
+          route_polyline: encoded,
+          route_distance_meters: Math.round(route.distanceMeters || 0),
+          route_duration_minutes: Math.max(1, Math.round(seconds / 60)),
           route_computed_at: isoNow()
         };
       }).catch(function () { return null; });
@@ -520,6 +563,7 @@ export default function boot(options) {
       text('trip-customer-name', customer.name, 'Customer');
       text('trip-customer-phone', customer.phone_masked, 'Not shared');
       text('trip-customer-address', location.address, 'Address not shared');
+      byId('copy-address').classList.toggle('hidden', !location.address);
       text('trip-car-name', vehicle.name);
       text('trip-car-reg', plateWrap(vehicle.reg));
       text('trip-order-id', detail.order_id);
@@ -566,13 +610,17 @@ export default function boot(options) {
     function renderGate() {
       var arriving = !!ARRIVAL_STAGES[state.stage];
       var lockedNow = arriving && state.locked && state.away !== null;
+      var offered = arriving && !lockedNow;
+      /* The action just became available while the sheet is closed: show it, do not leave it hidden below the map. */
+      if (offered && !reachedWasOffered && sheetState === 'closed') setSheetState('peek');
+      reachedWasOffered = offered;
       byId('arrive-block').classList.toggle('hidden', !arriving);
       byId('peek-reached').classList.toggle('hidden', !arriving || lockedNow);
       byId('reached').classList.toggle('hidden', lockedNow);
       var line = '';
       if (lockedNow) {
-        line = Math.max(ARRIVE_RADIUS_M + 10, Math.round(state.away / 10) * 10) +
-          ' m to the customer \u00b7 arrival unlocks within ' + ARRIVE_RADIUS_M + ' m';
+        line = formatDistance(Math.max(ARRIVE_RADIUS_M + 10, Math.round(state.away / 10) * 10)) +
+          ' to the customer \u00b7 arrival unlocks within ' + ARRIVE_RADIUS_M + ' m';
       }
       ['peek-lock', 'arrive-lock'].forEach(function (id) {
         byId(id).textContent = line;
@@ -604,6 +652,7 @@ export default function boot(options) {
       if (sim.on) return;   /* Simulate drive: real GPS fixes are ignored while the virtual position drives state.fix */
       state.fix = fix;
       state.serverAway = null;
+      noteFix(fix);
       setPermission('granted');
       updateGate();
     }
@@ -637,6 +686,9 @@ export default function boot(options) {
         setSheet(true);
       }
       renderShots();
+      syncFollowToStage();
+      syncWakeLock();
+      checkGps();
     }
 
     /* "450 m" below a kilometre (to the nearest 10 m), "1.2 km" from a kilometre up. */
@@ -665,87 +717,489 @@ export default function boot(options) {
       text('peek-name', customer.name, 'Customer');
       var how = state.eta ? (state.eta + ' min' + (dist ? ' \u00b7 ' + dist : '') + ' away') : (dist ? dist + ' away' : '');
       byId('peek-what').textContent = how ? (how + ' \u00b7 ' + stageLabel) : stageLabel;
+      sheetSummary = how || stageLabel;   /* shown in the sheet's handle while it is closed */
+      updateHandle();
     }
 
-    /* ---------------- map ---------------- */
+    /* ---------------- map (Google Maps JavaScript API) ---------------- */
 
-    var map = null, routeLayer = null, techMarker = null, pinMarker = null;
+    var map = null, routeLines = [], techMarker = null, pinMarker = null, accuracyCircle = null, trafficLayer = null;
+    var mapListeners = [];
+    var HtmlMarker = null;     /* overlay class, built once google.maps is loaded */
+    var follow = false;        /* follow mode: the map keeps the technician in view while driving */
+    var followButton = null;
+    var markerAnimation = null;
+    var gpsLost = false;
+
+    /* A small white label above a map marker ("Customer", "You"), wrapped so both markers share one centred layout. */
+    function markerChip(label) {
+      return '<span style="display:block;margin:0 auto 4px;width:max-content;max-width:86px;background:#fff;color:#101820;' +
+        'font:700 11px/1 system-ui,-apple-system,sans-serif;padding:4px 8px;border-radius:999px;' +
+        'box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap">' + label + '</span>';
+    }
+
+    var PIN_HTML = markerChip(MARKER_LABEL_CUSTOMER) +
+      '<svg width="30" height="40" viewBox="0 0 30 40" style="display:block;margin:0 auto;filter:drop-shadow(0 1px 3px rgba(0,0,0,.45))">' +
+      '<path d="M15 39C15 39 2 25 2 14.5 2 7.6 7.8 2 15 2s13 5.6 13 12.5C28 25 15 39 15 39z" fill="#d93025" stroke="#fff" stroke-width="2.5"/>' +
+      '<circle cx="15" cy="11.5" r="3.6" fill="#fff"/><path d="M8.5 21.5c0-3.6 3-5.8 6.5-5.8s6.5 2.2 6.5 5.8z" fill="#fff"/></svg>';
+
+    /* The technician: a blue disc with a car while the direction of travel is unknown, a white arrow pointing along it once known. */
+    var TECH_HTML = markerChip(MARKER_LABEL_TECH) +
+      '<div style="box-sizing:border-box;margin:0 auto;width:34px;height:34px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center">' +
+      '<svg data-tech="car" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M5 12l1.6-4.6A2 2 0 0 1 8.5 6h7a2 2 0 0 1 1.9 1.4L19 12" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>' +
+      '<rect x="3" y="12" width="18" height="5.5" rx="2" fill="#fff"/>' +
+      '<circle cx="7.5" cy="18" r="2" fill="#fff" stroke="#1a73e8" stroke-width="1"/><circle cx="16.5" cy="18" r="2" fill="#fff" stroke="#1a73e8" stroke-width="1"/></svg>' +
+      '<svg data-tech="arrow" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" style="display:none;transition:transform .4s ease-out">' +
+      '<path d="M12 2.5l7.5 18-7.5-4.2-7.5 4.2z" fill="#fff"/></svg></div>';
+
+    /* HTML markers drawn through an OverlayView: they need no Map ID and keep the page's existing marker look. */
+    function makeHtmlMarkerClass() {
+      function Overlay(position, html, anchorX, anchorY, zIndex, decorate) {
+        this.position = position;
+        this.html = html;
+        this.anchorX = anchorX;
+        this.anchorY = anchorY;
+        this.zIndex = zIndex;
+        this.decorate = decorate || null;
+        this.div = null;
+      }
+      Overlay.prototype = new G.OverlayView();
+      Overlay.prototype.onAdd = function () {
+        var div = document.createElement('div');
+        div.style.position = 'absolute';
+        div.style.width = (this.anchorX * 2) + 'px';
+        div.style.pointerEvents = 'none';     /* drags and pinches go through to the map */
+        div.style.zIndex = String(this.zIndex);
+        div.innerHTML = this.html;
+        this.div = div;
+        this.getPanes().floatPane.appendChild(div);
+      };
+      Overlay.prototype.draw = function () {
+        if (!this.div) return;
+        var projection = this.getProjection();
+        var point = projection && projection.fromLatLngToDivPixel(this.position);
+        if (!point) return;
+        this.div.style.left = (point.x - this.anchorX) + 'px';
+        this.div.style.top = (point.y - this.anchorY) + 'px';
+        if (this.decorate) this.decorate(this.div);
+      };
+      Overlay.prototype.onRemove = function () {
+        if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div);
+        this.div = null;
+      };
+      Overlay.prototype.setPosition = function (position) { this.position = position; this.draw(); };
+      Overlay.prototype.getPosition = function () { return this.position; };
+      return Overlay;
+    }
+
+    /* Arrow vs car, the arrow's rotation, and a faded marker while the GPS is lost. */
+    function decorateTech(div) {
+      var car = div.querySelector('[data-tech="car"]');
+      var arrow = div.querySelector('[data-tech="arrow"]');
+      var known = typeof state.heading === 'number' && isFinite(state.heading);
+      if (car) car.style.display = known ? 'none' : 'block';
+      if (arrow) {
+        arrow.style.display = known ? 'block' : 'none';
+        if (known) arrow.style.transform = 'rotate(' + Math.round(state.heading) + 'deg)';
+      }
+      div.style.opacity = gpsLost ? '0.45' : '1';
+    }
+
+    function latLng(lat, lng) { return new G.LatLng(Number(lat), Number(lng)); }
+
+    function pinLatLng() {
+      var location = (state.detail && state.detail.customer_location) || {};
+      var lat = Number(location.latitude), lng = Number(location.longitude);
+      if (location.latitude === null || location.latitude === undefined || location.latitude === '' ||
+          !isFinite(lat) || !isFinite(lng)) return null;
+      return latLng(lat, lng);
+    }
+
+    function onMap(target, event, handler) {
+      mapListeners.push(G.event.addListener(target, event, handler));
+    }
 
     function buildMap() {
-      if (!L) return;   /* Leaflet could not be loaded: the trip sheet still works without the map */
-      var location = (state.detail && state.detail.customer_location) || {};
-      var pin = [location.latitude, location.longitude];
+      if (!G) return;   /* Google Maps could not be loaded: the trip sheet still works without the map */
+      var pin = pinLatLng();
       if (!map) {
-        map = L.map('map', { zoomControl: false }).setView(pin, 14);
-        /* OpenStreetMap tiles need no key; the CARTO basemap now answers "API KEY REQUIRED" placeholders. */
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19,
-          attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-        L.control.zoom({ position: 'bottomright' }).addTo(map);
-        setTimeout(function () { if (map) map.invalidateSize(); }, 60);
+        if (!HtmlMarker) HtmlMarker = makeHtmlMarkerClass();
+        map = new G.Map(byId('map'), {
+          center: pin || latLng(20.59, 78.96),
+          zoom: pin ? 14 : 5,
+          disableDefaultUI: true,
+          zoomControl: true,
+          zoomControlOptions: { position: G.ControlPosition.RIGHT_BOTTOM },
+          gestureHandling: 'greedy',     /* one finger pans: this is a full-screen map, not a map inside a scrolling page */
+          clickableIcons: false,
+          keyboardShortcuts: false,
+          /* shop and business labels add clutter while driving; roads, landmarks and transit stay */
+          styles: [{ featureType: 'poi.business', stylers: [{ visibility: 'off' }] }]
+        });
+        /* Live congestion on the roads ahead; part of the map load, no extra request. */
+        trafficLayer = new G.TrafficLayer();
+        trafficLayer.setMap(map);
+        buildFollowButton();
+        /* The technician moved the map: stop pulling it back to them until they tap Re-centre. */
+        onMap(map, 'dragstart', function () { if (follow) setFollow(false, true); });
       }
-      var pinIcon = L.divIcon({
-        className: '',
-        html: '<div style="width:18px;height:18px;border-radius:50%;background:#101820;border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.4)"></div>',
-        iconSize: [18, 18], iconAnchor: [9, 9]
-      });
-      if (pinMarker) { pinMarker.setLatLng(pin); } else { pinMarker = L.marker(pin, { icon: pinIcon }).addTo(map); }
+      if (pin) {
+        if (pinMarker) pinMarker.setPosition(pin);
+        else {
+          pinMarker = new HtmlMarker(pin, PIN_HTML, 43, 62, 1);   /* the tip of the pin sits exactly on the customer's location */
+          pinMarker.setMap(map);
+        }
+      }
       drawRouteLine();
-      frameMap();
+      refreshView();
+    }
+
+    function clearRouteLines() {
+      routeLines.forEach(function (line) { line.setMap(null); });
+      routeLines = [];
     }
 
     function drawRouteLine() {
       if (!map) return;
-      if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
-      if ((!state.route || state.route.length < 2) && state.fix && pinMarker) {
-        // No route yet (reloaded mid-trip, or the route was refused): a dashed line beats an empty map.
-        routeLayer = L.polyline([pinMarker.getLatLng(), L.latLng(state.fix.latitude, state.fix.longitude)],
-          { color: '#9aa4ae', weight: 3, dashArray: '6 8' }).addTo(map);
+      clearRouteLines();
+      var pin = pinLatLng();
+      if ((!state.route || state.route.length < 2) && state.fix && pin) {
+        // No route yet (reloaded mid-trip on another device, or the route was refused): a dashed line beats an empty map.
+        routeLines.push(new G.Polyline({
+          map: map,
+          path: [pin, latLng(state.fix.latitude, state.fix.longitude)],
+          strokeOpacity: 0,
+          icons: [{ icon: { path: 'M 0,-1 0,1', strokeColor: '#5f6b76', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: '14px' }],
+          clickable: false
+        }));
         return;
       }
       if (!state.route || state.route.length < 2) return;
-      routeLayer = L.layerGroup([
-        L.polyline(state.route, { color: '#ffffff', weight: 9, opacity: .9 }),
-        L.polyline(state.route, { color: '#f9c22e', weight: 5 })
-      ]).addTo(map);
+      var path = state.route.map(function (point) { return latLng(point[0], point[1]); });
+      routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#ffffff', strokeOpacity: 0.95, strokeWeight: 9, zIndex: 1, clickable: false }));
+      /* blue, not the brand yellow: the traffic layer paints roads green / orange / red and yellow got lost among them */
+      routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#1557c0', strokeOpacity: 1, strokeWeight: 5, zIndex: 2, clickable: false }));
     }
 
+    /* Pixels at the top of the map covered by the header and the ETA pill (the sheet is kept off the map, see syncMapInset). */
+    function topOverlay() {
+      var mapEl = byId('map');
+      var pill = byId('eta-pill');
+      if (!mapEl) return 0;
+      var top = mapEl.getBoundingClientRect().top;
+      var bottom = pill && pill.offsetParent ? pill.getBoundingClientRect().bottom : 0;
+      return Math.max(0, Math.round(bottom - top));
+    }
+
+    /* Whole trip in view: the customer, the technician and the route. */
     function frameMap() {
       if (!map) return;
-      var points = [];
-      if (pinMarker) points.push(pinMarker.getLatLng());
-      if (techMarker) points.push(techMarker.getLatLng());
-      state.route.forEach(function (point) { points.push(L.latLng(point[0], point[1])); });
-      if (!points.length) return;
-      map.fitBounds(L.latLngBounds(points), { paddingTopLeft: [40, 130], paddingBottomRight: [40, 40] });
+      var bounds = new G.LatLngBounds();
+      var any = false;
+      var pin = pinLatLng();
+      if (pin) { bounds.extend(pin); any = true; }
+      if (state.fix) { bounds.extend(latLng(state.fix.latitude, state.fix.longitude)); any = true; }
+      (state.route || []).forEach(function (point) { bounds.extend(latLng(point[0], point[1])); any = true; });
+      if (!any) return;
+      /* the top padding also clears the pin and its label, which stand ~62px above the customer's point */
+      map.fitBounds(bounds, { top: topOverlay() + 70, right: 50, bottom: 40, left: 50 });
+      /* one point (or two very close ones) would zoom right in to the rooftops */
+      G.event.addListenerOnce(map, 'idle', function () { if (map && map.getZoom() > FOLLOW_ZOOM) map.setZoom(FOLLOW_ZOOM); });
+    }
+
+    /* Centre on the technician, a little below the middle so the header and ETA pill do not cover them. */
+    function followTech() {
+      if (!map || !state.fix) return;
+      var lat = Number(state.fix.latitude), lng = Number(state.fix.longitude);
+      var zoom = map.getZoom() || FOLLOW_ZOOM;
+      var metresPerPixel = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+      var shiftLat = (topOverlay() / 2) * metresPerPixel / 111320;
+      map.panTo(latLng(lat + shiftLat, lng));
+    }
+
+    function refreshView() {
+      if (follow) followTech(); else frameMap();
+    }
+
+    /* Follow mode is offered only while driving to the customer. byUser = the technician dragged the map: leave the view
+       where they put it instead of re-framing it. */
+    function setFollow(on, byUser) {
+      follow = !!on && !!ARRIVAL_STAGES[state.stage];
+      renderFollowButton();
+      if (!map || byUser) return;
+      if (follow) {
+        if ((map.getZoom() || 0) < FOLLOW_ZOOM - 1) map.setZoom(FOLLOW_ZOOM);
+        followTech();
+      } else {
+        frameMap();
+      }
+    }
+
+    function buildFollowButton() {
+      followButton = document.createElement('button');
+      followButton.type = 'button';
+      followButton.className = 'map-btn';
+      followButton.addEventListener('click', function () { setFollow(!follow); });
+      map.controls[G.ControlPosition.RIGHT_BOTTOM].push(followButton);
+      renderFollowButton();
+    }
+
+    function renderFollowButton() {
+      if (!followButton) return;
+      followButton.style.display = ARRIVAL_STAGES[state.stage] ? '' : 'none';
+      followButton.textContent = follow ? 'Overview' : 'Re-centre';
+      followButton.setAttribute('aria-label', follow ? 'Show the whole route' : 'Centre the map on you');
+    }
+
+    /* Stage changed: follow while driving to the customer, otherwise frame the customer and technician together. */
+    function syncFollowToStage() {
+      var driving = !!ARRIVAL_STAGES[state.stage];
+      if (driving === follow && map) { renderFollowButton(); return; }
+      if (!driving) setFollow(false); else renderFollowButton();
+    }
+
+    /* Glide the marker to its new position instead of jumping; long jumps (a reload, a GPS hop) and hidden tabs snap. */
+    function animateTech(target) {
+      if (markerAnimation) { cancelAnimationFrame(markerAnimation); markerAnimation = null; }
+      var from = techMarker.getPosition();
+      var gap = haversineM({ latitude: from.lat(), longitude: from.lng() }, { latitude: target.lat(), longitude: target.lng() });
+      if (gap > 300 || gap < 0.5 || document.hidden || typeof requestAnimationFrame !== 'function') {
+        techMarker.setPosition(target);
+        return;
+      }
+      var started = null;
+      var duration = 800;
+      function step(now) {
+        if (!techMarker) return;
+        if (started === null) started = now;
+        var k = Math.min(1, (now - started) / duration);
+        techMarker.setPosition(latLng(from.lat() + (target.lat() - from.lat()) * k, from.lng() + (target.lng() - from.lng()) * k));
+        markerAnimation = k < 1 ? requestAnimationFrame(step) : null;
+      }
+      markerAnimation = requestAnimationFrame(step);
     }
 
     function moveTech() {
       if (!map || !state.fix) return;
-      var at = [state.fix.latitude, state.fix.longitude];
-      if (techMarker) { techMarker.setLatLng(at); return; }
-      var icon = L.divIcon({
-        className: '',
-        html: '<div style="width:20px;height:20px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.45)"></div>',
-        iconSize: [20, 20], iconAnchor: [10, 10]
+      var at = latLng(state.fix.latitude, state.fix.longitude);
+      if (!techMarker) {
+        /* the centre of the round marker sits on the technician's position */
+        techMarker = new HtmlMarker(at, TECH_HTML, 43, 40, 2, decorateTech);
+        techMarker.setMap(map);
+      } else {
+        animateTech(at);
+        techMarker.draw();
+      }
+      var accuracy = Number(state.fix.accuracy);
+      if (isFinite(accuracy) && accuracy > 0) {
+        if (!accuracyCircle) {
+          accuracyCircle = new G.Circle({
+            map: map, center: at, radius: accuracy, clickable: false,
+            strokeColor: '#1a73e8', strokeOpacity: 0.35, strokeWeight: 1, fillColor: '#1a73e8', fillOpacity: 0.12
+          });
+        } else {
+          accuracyCircle.setCenter(at);
+          accuracyCircle.setRadius(accuracy);
+        }
+      }
+      if (follow) followTech();
+    }
+
+    /* Keep the map's bottom edge at the sheet's top edge, so nothing the technician needs (their marker, Google's
+       logo and terms, the zoom and Re-centre buttons) ends up hidden behind the sheet. The open sheet covers the map
+       anyway, so the map keeps its summary-height inset then. */
+    function syncMapInset() {
+      var mapEl = byId('map');
+      if (!mapEl) return;
+      var covered = sheetState === 'closed'
+        ? (byId('sheet-grab').offsetHeight || HANDLE_FALLBACK_H)
+        : Math.round(sheetHeight() - peekOffset());
+      mapEl.style.bottom = Math.max(0, covered) + 'px';
+      if (map && follow) setTimeout(followTech, 300);   /* after the resize has settled */
+    }
+
+    /* ---------------- heading, GPS health, wake lock ---------------- */
+
+    function bearingDeg(a, b) {
+      var rad = Math.PI / 180;
+      var y = Math.sin((b.longitude - a.longitude) * rad) * Math.cos(b.latitude * rad);
+      var x = Math.cos(a.latitude * rad) * Math.sin(b.latitude * rad) -
+        Math.sin(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.cos((b.longitude - a.longitude) * rad);
+      return (Math.atan2(y, x) / rad + 360) % 360;
+    }
+
+    var headingFrom = null;   /* the fix the next bearing is measured from */
+
+    /* Direction of travel: the GPS heading while actually moving, otherwise the bearing from the last point at least
+       HEADING_MIN_MOVE_M away (so a parked phone's jitter does not spin the arrow). Unknown keeps the last value. */
+    function noteFix(fix) {
+      state.lastFixAt = Date.now();
+      if (!fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) return;
+      var gpsHeading = typeof fix.heading === 'number' && isFinite(fix.heading) &&
+        typeof fix.speed === 'number' && isFinite(fix.speed) && fix.speed >= HEADING_MIN_SPEED_MS;
+      if (gpsHeading) {
+        state.heading = fix.heading;
+        headingFrom = fix;
+      } else if (!headingFrom) {
+        headingFrom = fix;
+      } else if (haversineM(headingFrom, fix) >= Math.max(HEADING_MIN_MOVE_M, (Number(fix.accuracy) || 0) * 0.5)) {
+        state.heading = bearingDeg(headingFrom, fix);
+        headingFrom = fix;
+      }
+      if (gpsLost) checkGps();
+    }
+
+    function agoText(ms) {
+      var seconds = Math.round(ms / 1000);
+      return seconds < 90 ? seconds + ' s ago' : Math.round(seconds / 60) + ' min ago';
+    }
+
+    /* No fix for GPS_LOST_MS while the location watch runs: say so on the map and fade the marker. */
+    function checkGps() {
+      var watching = state.watchId !== null || sim.on;
+      var on = !demo && watching && !!DRIVING_STAGES[state.stage] && !document.hidden;
+      var since = state.lastFixAt || state.watchStartedAt;
+      var lost = on && since > 0 && Date.now() - since > GPS_LOST_MS;
+      var pill = byId('gps-pill');
+      if (pill) {
+        pill.textContent = lost
+          ? (state.lastFixAt ? 'GPS signal lost · last update ' + agoText(Date.now() - state.lastFixAt) : 'Waiting for GPS…')
+          : '';
+        pill.classList.toggle('hidden', !lost);
+      }
+      if (lost !== gpsLost) {
+        gpsLost = lost;
+        if (techMarker) techMarker.draw();
+      }
+    }
+
+    var wakeLock = null, wakeLockPending = false, tripShown = false;
+
+    /* Keep the screen on while driving: a locked screen stops the browser's GPS and the location posts with it. */
+    function syncWakeLock() {
+      var want = !demo && tripShown && !!DRIVING_STAGES[state.stage] && !document.hidden && !destroyed;
+      var supported = !!(navigator.wakeLock && typeof navigator.wakeLock.request === 'function');
+      var hint = byId('screen-hint');
+      if (hint) hint.classList.toggle('hidden', !(tripShown && !demo && DRIVING_STAGES[state.stage] && !supported));
+      if (!supported) return;
+      if (!want) {
+        if (wakeLock) { var held = wakeLock; wakeLock = null; held.release().catch(noop); }
+        return;
+      }
+      if (wakeLock || wakeLockPending) return;
+      wakeLockPending = true;
+      navigator.wakeLock.request('screen').then(function (lock) {
+        wakeLockPending = false;
+        wakeLock = lock;
+        lock.addEventListener('release', function () { if (wakeLock === lock) wakeLock = null; });
+        syncWakeLock();   /* things may have changed while the request was out: release again if not wanted */
+      }).catch(function () { wakeLockPending = false; /* low battery mode etc.: nothing to do */ });
+    }
+
+    /* Back from another app or a locked screen: catch up at once instead of waiting for the next poll tick. */
+    function resumeTracking() {
+      if (demo || sim.on || destroyed || !DRIVING_STAGES[state.stage] || !state.pollTimer) return;
+      clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+      positionFix().then(noop, noop).then(function () {
+        if (destroyed) return null;
+        moveTech();
+        return sendLocation();
+      }).then(function () {
+        if (!destroyed && DRIVING_STAGES[state.stage] && !state.pollTimer && !sim.on) schedulePoll();
       });
-      techMarker = L.marker(at, { icon: icon }).addTo(map);
+    }
+
+    function onVisibility() {
+      syncWakeLock();
+      checkGps();
+      if (!document.hidden) resumeTracking();
+    }
+
+    /* ---------------- route kept across reloads ---------------- */
+
+    function routeKey() { return ROUTE_STORAGE_KEY + ':' + (jobToken || jobId || ''); }
+
+    function saveRoute(polyline) {
+      try { window.sessionStorage.setItem(routeKey(), polyline); } catch (error) { /* storage blocked: a reload shows the dashed line */ }
+    }
+
+    function loadRoute() {
+      try { return window.sessionStorage.getItem(routeKey()) || ''; } catch (error) { return ''; }
+    }
+
+    /* ---------------- copy address ---------------- */
+
+    function copyAddress() {
+      var address = ((state.detail && state.detail.customer_location) || {}).address;
+      var button = byId('copy-address');
+      if (!address || !button) return;
+      function done(ok) {
+        button.textContent = ok ? 'Copied' : 'Could not copy';
+        setTimeout(function () { if (!destroyed && byId('copy-address')) byId('copy-address').textContent = 'Copy address'; }, 2000);
+      }
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(address).then(function () { done(true); }, function () { done(legacyCopy(address)); });
+      } else {
+        done(legacyCopy(address));
+      }
+    }
+
+    function legacyCopy(value) {
+      var area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (error) { ok = false; }
+      document.body.removeChild(area);
+      return ok;
     }
 
     /* ---------------- bottom sheet: grab handle, two resting heights ---------------- */
 
     var PEEK_OFFSET = 0.62;
+    var HANDLE_FALLBACK_H = 44;           /* px of the closed strip when it cannot be measured */
     var sheet = byId('sheet');
-    var dragStartY = null, dragStartOffset = null, sheetOpen = false;
+    var dragStartY = null, dragStartOffset = null, dragMoved = false;
+    /* 'open' = full details, 'peek' = summary (default), 'closed' = only the labelled handle, so the map gets the screen. */
+    var sheetState = 'peek';
+    var sheetSummary = '';                /* the important detail shown in the closed handle: "4 min \u00b7 1.2 km away" */
+    var sheetOpen = false;
 
     function sheetHeight() { return sheet.offsetHeight || window.innerHeight * 0.9; }
+    function peekOffset() { return Math.round(sheetHeight() * PEEK_OFFSET); }
+    function closedOffset() { return Math.round(sheetHeight() - (byId('sheet-grab').offsetHeight || HANDLE_FALLBACK_H)); }
 
-    function setSheet(open) {
-      sheetOpen = open;
-      sheet.classList.toggle('open', open);
-      sheet.style.setProperty('--peek', open ? '0px' : Math.round(sheetHeight() * PEEK_OFFSET) + 'px');
+    /* The handle always says what tapping it does. */
+    function updateHandle() {
+      var closed = sheetState === 'closed';
+      var handle = byId('sheet-grab');
+      handle.setAttribute('aria-label', closed ? 'Show trip details' : 'Hide trip details');
+      handle.setAttribute('aria-expanded', closed ? 'false' : 'true');
+      byId('grab-chev').innerHTML = closed ? '&#9652;' : '&#9662;';
+      byId('grab-text').textContent = closed ? 'Show trip details' : 'Hide trip details';
+      byId('grab-detail').textContent = closed ? sheetSummary : '';
     }
+
+    function setSheetState(next) {
+      sheetState = next;
+      sheetOpen = next === 'open';
+      sheet.classList.toggle('open', sheetOpen);
+      sheet.classList.toggle('closed', next === 'closed');
+      byId('view-trip').classList.toggle('sheet-closed', next === 'closed');   /* styling hook; the map inset itself is set by syncMapInset */
+      var offset = next === 'open' ? 0 : (next === 'closed' ? closedOffset() : peekOffset());
+      sheet.style.setProperty('--peek', offset + 'px');
+      updateHandle();
+      syncMapInset();
+    }
+
+    /* Existing callers: true = full details, false = the summary. */
+    function setSheet(open) { setSheetState(open ? 'open' : 'peek'); }
 
     function currentOffset() {
       var transform = getComputedStyle(sheet).transform;
@@ -762,14 +1216,15 @@ export default function boot(options) {
         var point = event.touches ? event.touches[0] : event;
         dragStartY = point.clientY;
         dragStartOffset = currentOffset();
+        dragMoved = false;
         sheet.classList.add('dragging');
       }
       function move(event) {
         if (dragStartY === null) return;
         var point = event.touches ? event.touches[0] : event;
-        var next = dragStartOffset + (point.clientY - dragStartY);
-        var max = sheetHeight() * PEEK_OFFSET;
-        sheet.style.setProperty('--peek', Math.min(Math.max(next, 0), max) + 'px');
+        var delta = point.clientY - dragStartY;
+        if (Math.abs(delta) > 4) dragMoved = true;
+        sheet.style.setProperty('--peek', Math.min(Math.max(dragStartOffset + delta, 0), closedOffset()) + 'px');
         if (event.cancelable) event.preventDefault();
       }
       function end() {
@@ -777,7 +1232,12 @@ export default function boot(options) {
         var offset = currentOffset();
         sheet.classList.remove('dragging');
         dragStartY = null;
-        setSheet(offset < sheetHeight() * PEEK_OFFSET / 2);
+        if (!dragMoved) return;      /* a tap, not a drag: the click handlers below decide */
+        /* snap to the nearest of the three resting positions */
+        var targets = [['open', 0], ['peek', peekOffset()], ['closed', closedOffset()]];
+        var best = targets[0];
+        targets.forEach(function (target) { if (Math.abs(offset - target[1]) < Math.abs(offset - best[1])) best = target; });
+        setSheetState(best[0]);
       }
 
       [handle, peek].forEach(function (element) {
@@ -788,7 +1248,20 @@ export default function boot(options) {
       });
       addWindowListener('mousemove', move);
       addWindowListener('mouseup', end);
-      handle.addEventListener('click', function () { setSheet(!sheetOpen); });
+      /* tap the handle: hide the sheet down to the handle, or bring it back */
+      handle.addEventListener('click', function () {
+        if (dragMoved) { dragMoved = false; return; }
+        setSheetState(sheetState === 'closed' ? 'peek' : 'closed');
+      });
+      /* tap the summary (not a button): full details, or back to the summary */
+      peek.addEventListener('click', function (event) {
+        if (dragMoved) { dragMoved = false; return; }
+        if (event.target && event.target.closest && event.target.closest('button')) return;
+        setSheetState(sheetState === 'open' ? 'peek' : 'open');
+      });
+      /* orientation change / resize: resting offsets are pixel values, so recompute them */
+      addWindowListener('resize', function () { setSheetState(sheetState); });
+      updateHandle();
     }
 
     /* ---------------- journey ---------------- */
@@ -796,10 +1269,13 @@ export default function boot(options) {
     function showTrip() {
       byId('view-assigning').style.display = 'none';
       byId('view-trip').style.display = 'block';
+      tripShown = true;
       buildMap();
       moveTech();
-      frameMap();
       setSheet(false);
+      /* driving to the customer: follow the technician; any later stage: the customer and technician together */
+      setFollow(!!ARRIVAL_STAGES[state.stage]);
+      syncWakeLock();
     }
 
     function startTrip() {
@@ -832,6 +1308,7 @@ export default function boot(options) {
             payload.route_computed_at = route.route_computed_at;
             state.route = decodePolyline(route.route_polyline);
             state.routeAt = Date.now();
+            saveRoute(route.route_polyline);
           }
           return postJson(API + 'start_journey', payload);
         });
@@ -871,11 +1348,14 @@ export default function boot(options) {
     function watchPosition() {
       if (demo || sim.on) return;
       if (!navigator.geolocation || state.watchId !== null) return;
+      state.watchStartedAt = Date.now();
       state.watchId = navigator.geolocation.watchPosition(function (position) {
         setFix({
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy
+          accuracy: position.coords.accuracy,
+          heading: position.coords.heading,   /* map arrow only; never posted */
+          speed: position.coords.speed
         });
         moveTech();
       }, function () { /* the next poll keeps the last fix */ },
@@ -1024,6 +1504,7 @@ export default function boot(options) {
       sim.fix = { latitude: lat, longitude: lng, accuracy: SIM_ACCURACY_M };
       state.fix = sim.fix;
       state.serverAway = null;
+      noteFix(sim.fix);
       setPermission('granted');
       updateGate();
       moveTech();
@@ -1142,10 +1623,19 @@ export default function boot(options) {
         drawRouteLine();
         simDrive();
       }
-      /* Already past Start (reload, or the trip was started earlier): no T2; carry on with the page's own route when it
-         has one, otherwise draw one from the simulated position. */
-      if (!resume && state.route && state.route.length >= 2) { begin(simJoin(state.route.slice(), startAt)); return; }
+      /* Already past Start (reload, or the trip was started earlier): no T2. Use a route we already have, in this order: the
+         page's own, then the one saved at Start trip (or sent by the backend). A route is only drawn when there is none,
+         because every Routes call is billed and a reload must not trigger one. */
+      var have = (state.route && state.route.length >= 2) ? state.route.slice() : simSavedRoute();
+      if (have.length >= 2) { begin(resume ? have : simJoin(have, startAt)); return; }
       simDrawn(startAt, pin).then(function (drawn) { begin(drawn.pts); });
+    }
+
+    /* The route saved at Start trip in this tab, or the one the backend put in the job payload ([] when there is none). */
+    function simSavedRoute() {
+      var kept = loadRoute() || (state.detail && typeof state.detail.route_polyline === 'string' ? state.detail.route_polyline : '');
+      var pts = kept ? decodePolyline(kept) : [];
+      return pts.length >= 2 ? pts : [];
     }
 
     /* A route that begins somewhere else gets the start point put in front, so the marker does not jump. */
@@ -1284,7 +1774,7 @@ export default function boot(options) {
         if (body.error === 'too_far_from_customer') {
           var away = data.distance_m;
           lockFromServer(away);
-          setNotice('otp-notice', 'You look ' + (away ? Math.round(away) + ' m' : 'too far') +
+          setNotice('otp-notice', 'You look ' + (away ? formatDistance(away) : 'too far') +
             ' from the customer. Move closer to the car and enter the OTP again.', true);
           return;
         }
@@ -1337,7 +1827,7 @@ export default function boot(options) {
         if (body.error === 'too_far_from_customer') {
           var away = ((body.data || {}).distance_m);
           lockFromServer(away);
-          setNotice('arrive-notice', 'You look ' + (away ? Math.round(away) + ' m' : 'too far') +
+          setNotice('arrive-notice', 'You look ' + (away ? formatDistance(away) : 'too far') +
             ' from the customer. Move closer and tap again.', true);
           return;
         }
@@ -1644,10 +2134,19 @@ export default function boot(options) {
         event.target.value = '';
         uploadPhoto(file);
       });
+      byId('copy-address').addEventListener('click', copyAddress);
       bindSheet();
       /* safety stop: a camera must never stay on once the page is hidden or leaves */
       document.addEventListener('visibilitychange', stopCameraWhenHidden);
       addWindowListener('pagehide', closeCamera);
+      /* wake lock, GPS health and an immediate catch-up post when the page comes back to the front */
+      document.addEventListener('visibilitychange', onVisibility);
+      if (!demo) gpsTimer = setInterval(checkGps, 5000);
+      if (!G && !demo) {
+        setNotice('trip-notice', mapsKey
+          ? 'The map could not be loaded. The trip, arrival and location sharing still work.'
+          : 'The map is not set up for this page. The trip, arrival and location sharing still work.', true);
+      }
   
       if (demo) {
         state.detail = JSON.parse(JSON.stringify(DEMO_DETAIL));
@@ -1697,7 +2196,13 @@ export default function boot(options) {
           return;
         }
         // Reloaded mid-trip (or the job moved on): go straight back to the map and let the location poll rebuild the
-        // ETA instead of offering Start Trip again.
+        // ETA instead of offering Start Trip again. The Start-trip route comes back from this tab's storage (or the job
+        // payload, if the backend sends it) - never a new Routes call, which would be billed on every reload.
+        if (DRIVING_STAGES[state.stage] && (!state.route || state.route.length < 2)) {
+          var keptRoute = loadRoute() || (typeof state.detail.route_polyline === 'string' ? state.detail.route_polyline : '');
+          var keptPoints = keptRoute ? decodePolyline(keptRoute) : [];
+          if (keptPoints.length >= 2) state.route = keptPoints;
+        }
         showTrip();
         if (DRIVING_STAGES[state.stage]) { watchPosition(); schedulePoll(); }
         if (state.stage === 'working' || state.stage === 'completed') setSheet(true);
@@ -1706,39 +2211,50 @@ export default function boot(options) {
       });
     }
 
-    /* ---------------- Leaflet (first boot only) ---------------- */
+    /* ---------------- Google Maps JavaScript API (first boot only) ---------------- */
 
-    function withLeaflet(done) {
-      if (window.L) { L = window.L; done(); return; }
-      var remaining = 2;
-      function settled() {
-        remaining -= 1;
-        if (remaining > 0 || destroyed) return;
-        L = window.L || null;
+    /* Load the Maps JavaScript API once, then start the page. A missing key, a blocked script or a slow network never
+       blocks the job: after MAPS_LOAD_TIMEOUT_MS (or on error) the page starts without a map. */
+    function withGoogleMaps(done) {
+      var finished = false;
+      function settle() {
+        if (finished || destroyed) return;
+        finished = true;
+        G = (window.google && window.google.maps && window.google.maps.Map) ? window.google.maps : null;
         done();
       }
-      var link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = LEAFLET_CSS;
-      link.onload = settled;
-      link.onerror = settled;
+      /* Google calls this when the key is rejected (wrong key, API not enabled, referrer not allowed). */
+      window.gm_authFailure = function () {
+        if (destroyed) return;
+        setNotice('trip-notice', 'The map could not be loaded (map key rejected). The trip, arrival and location sharing still work.', true);
+        if (typeof previousAuthFailure === 'function') previousAuthFailure();
+      };
+      if (window.google && window.google.maps && window.google.maps.Map) { settle(); return; }
+      if (!mapsKey) { settle(); return; }
+      var timer = setTimeout(settle, MAPS_LOAD_TIMEOUT_MS);
+      window[MAPS_CALLBACK] = function () { clearTimeout(timer); settle(); };
       var script = document.createElement('script');
-      script.src = LEAFLET_JS;
-      script.onload = settled;
-      script.onerror = settled;
-      injected.push(link, script);
-      document.head.appendChild(link);
+      script.src = GOOGLE_MAPS_JS + '?key=' + encodeURIComponent(mapsKey) + '&v=weekly&callback=' + MAPS_CALLBACK;
+      script.async = true;
+      script.onerror = function () { clearTimeout(timer); settle(); };
+      injected.push(script);
       document.head.appendChild(script);
     }
 
     simBuildUi();   /* Simulate drive switch (testing only; renders nothing when SHOW_TEST_SWITCH is false) */
-    withLeaflet(startPage);
+    withGoogleMaps(startPage);
 
     return function teardown() {
       if (destroyed) return;
       destroyed = true;
       closeCamera();
       document.removeEventListener('visibilitychange', stopCameraWhenHidden);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (gpsTimer) { clearInterval(gpsTimer); gpsTimer = null; }
+      if (wakeLock) { var held = wakeLock; wakeLock = null; held.release().catch(noop); }
+      if (markerAnimation) { cancelAnimationFrame(markerAnimation); markerAnimation = null; }
+      window.gm_authFailure = previousAuthFailure;
+      try { delete window[MAPS_CALLBACK]; } catch (error) { window[MAPS_CALLBACK] = undefined; }
       if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
       stopWatch();
       simHalt();
@@ -1747,8 +2263,14 @@ export default function boot(options) {
       windowListeners = [];
       if (headerObserver) { headerObserver.disconnect(); headerObserver = null; }
       if (map) {
-        try { map.remove(); } catch (error) { /* already gone */ }
-        map = null; routeLayer = null; techMarker = null; pinMarker = null;
+        try {
+          mapListeners.forEach(function (listener) { listener.remove(); });
+          clearRouteLines();
+          [techMarker, pinMarker, accuracyCircle, trafficLayer].forEach(function (item) { if (item) item.setMap(null); });
+          G.event.clearInstanceListeners(map);
+        } catch (error) { /* already gone */ }
+        mapListeners = []; map = null; techMarker = null; pinMarker = null; accuracyCircle = null; trafficLayer = null;
+        followButton = null;
       }
       objectUrls.forEach(function (url) { try { window.URL.revokeObjectURL(url); } catch (error) { /* ignore */ } });
       objectUrls = [];
