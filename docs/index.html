@@ -403,6 +403,13 @@ var ROUTE_RETRY_MS = 30000;           /* wait between those fetches after a fail
 var MARKER_LABEL_CUSTOMER = 'Customer';
 var MARKER_LABEL_TECH = 'You';
 
+/* The route line shrinks as the technician drives: the part already passed is not drawn. It is worked out on the page
+   from the route we already have, so it costs nothing and never asks Google for a new route. */
+var ROUTE_OFF_M = 80;        /* further than this from the route (or twice the GPS accuracy): off route, leave the line alone */
+var ROUTE_BACK_M = 40;       /* how far behind the last matched point a fix may land (GPS jitter) before it is ignored */
+var ROUTE_AHEAD_M = 1500;    /* first look this far ahead along the route; only if that fails, look along the rest of it */
+var ROUTE_REDRAW_M = 4;      /* redraw the line only after the technician has advanced this far along it */
+
 /* ---- TESTING ONLY: "Simulate drive" switch. Everything for it is behind SHOW_TEST_SWITCH: set it to false and the switch is
    not rendered and the page behaves exactly as before. (Search for "Simulate drive" to find every piece.) ---- */
 var SHOW_TEST_SWITCH = true;
@@ -1239,6 +1246,80 @@ function boot(options) {
       refreshView();
     }
 
+    /* ---- route progress: where the technician is along the route, so the passed part can be left out ---- */
+    var routeGeo = null;   /* { src, cum, idx, t, along, snapped, off, drawnAlong } for the route array now in state.route */
+
+    function routeGeometry() {
+      var r = state.route;
+      if (routeGeo && routeGeo.src === r) return routeGeo;
+      routeGeo = { src: r, cum: [0], idx: 0, t: 0, along: 0, snapped: null, off: false, drawnAlong: -1 };   /* a new route starts again from its beginning */
+      for (var i = 1; i < r.length; i += 1) {
+        routeGeo.cum.push(routeGeo.cum[i - 1] + haversineM(
+          { latitude: r[i - 1][0], longitude: r[i - 1][1] }, { latitude: r[i][0], longitude: r[i][1] }));
+      }
+      return routeGeo;
+    }
+
+    /* Nearest point of segment a-b to fix p, on a flat local grid in metres (plenty accurate over a few hundred metres). */
+    function projectOnSegment(a, b, p) {
+      var mx = 111320 * Math.cos(p.latitude * Math.PI / 180), my = 110540;
+      var ax = (a[1] - p.longitude) * mx, ay = (a[0] - p.latitude) * my;
+      var bx = (b[1] - p.longitude) * mx, by = (b[0] - p.latitude) * my;
+      var dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+      var t = len2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2)) : 0;
+      var cx = ax + dx * t, cy = ay + dy * t;
+      return { t: t, dist: Math.sqrt(cx * cx + cy * cy), point: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t] };
+    }
+
+    /* Moves the matched point forward to the technician's position. Returns true when the line should be redrawn.
+       The matched point only ever moves forward, and a fix far from the route changes nothing. */
+    function updateRouteProgress(fix) {
+      var r = state.route;
+      if (!r || r.length < 2 || !fix || !isFinite(fix.latitude) || !isFinite(fix.longitude)) return false;
+      var g = routeGeometry(), best = null;
+      function scan(fromAlong, toAlong) {
+        for (var i = 0; i < r.length - 1; i += 1) {
+          if (g.cum[i + 1] < fromAlong || g.cum[i] > toAlong) continue;
+          var pr = projectOnSegment(r[i], r[i + 1], fix);
+          var along = g.cum[i] + pr.t * (g.cum[i + 1] - g.cum[i]);
+          if (!best || pr.dist < best.dist - 0.5 || (Math.abs(pr.dist - best.dist) <= 0.5 && along < best.along)) {
+            best = { i: i, t: pr.t, dist: pr.dist, along: along, point: pr.point };
+          }
+        }
+      }
+      var accuracy = Number(fix.accuracy);
+      var limit = Math.max(ROUTE_OFF_M, 2 * (isFinite(accuracy) ? accuracy : 0));
+      scan(g.along - ROUTE_BACK_M, g.along + ROUTE_AHEAD_M);
+      if (!best || best.dist > limit) { best = null; scan(g.along - ROUTE_BACK_M, Infinity); }   /* lost it (GPS gap, reload): look along the rest */
+      if (!best || best.dist > limit) { g.off = true; return false; }                           /* off route: keep what is drawn */
+      g.off = false;
+      if (best.along < g.along) return false;                                                    /* never backwards */
+      g.idx = best.i; g.t = best.t; g.along = best.along; g.snapped = best.point;
+      g.fixPt = [fix.latitude, fix.longitude]; g.fixGap = best.dist;   /* the line starts at the technician, then joins the road */
+      if (g.drawnAlong >= 0 && g.along - g.drawnAlong < ROUTE_REDRAW_M) return false;
+      g.drawnAlong = g.along;
+      return true;
+    }
+
+    /* The route still ahead: from the matched point on the road to the end (the whole route before any match). */
+    function remainingRoute() {
+      var r = state.route;
+      if (!r || r.length < 2) return [];
+      var g = routeGeometry();
+      if (!g.snapped) return r;
+      var out = (g.fixPt && g.fixGap > 3) ? [g.fixPt, g.snapped] : [g.snapped];
+      for (var i = g.idx + 1; i < r.length; i += 1) out.push(r[i]);
+      return out;
+    }
+
+    /* Shorten the lines already on the map (no new objects, no network). */
+    function trimRouteLine() {
+      var rem = remainingRoute();
+      if (rem.length < 2) { clearRouteLines(); return; }
+      var path = rem.map(function (point) { return latLng(point[0], point[1]); });
+      if (routeLines.length === 2) { routeLines[0].setPath(path); routeLines[1].setPath(path); } else drawRouteLine();
+    }
+
     function clearRouteLines() {
       routeLines.forEach(function (line) { line.setMap(null); });
       routeLines = [];
@@ -1250,7 +1331,10 @@ function boot(options) {
       /* Only a real road route is ever drawn. Without one the map shows just the two markers while ensureRoute()
          fetches it; a straight or dashed line would point the technician across buildings. */
       if (!state.route || state.route.length < 2) return;
-      var path = state.route.map(function (point) { return latLng(point[0], point[1]); });
+      if (state.fix) updateRouteProgress(state.fix);   /* a (re)drawn route starts at the technician at once, not at the next fix */
+      var rem = remainingRoute();   /* only what is still ahead of the technician */
+      if (rem.length < 2) return;
+      var path = rem.map(function (point) { return latLng(point[0], point[1]); });
       routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#ffffff', strokeOpacity: 0.95, strokeWeight: 9, zIndex: 1, clickable: false }));
       /* blue, not the brand yellow: the traffic layer paints roads green / orange / red and yellow got lost among them */
       routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#1557c0', strokeOpacity: 1, strokeWeight: 5, zIndex: 2, clickable: false }));
@@ -1274,7 +1358,7 @@ function boot(options) {
       var pin = pinLatLng();
       if (pin) { bounds.extend(pin); any = true; }
       if (state.fix) { bounds.extend(latLng(state.fix.latitude, state.fix.longitude)); any = true; }
-      (state.route || []).forEach(function (point) { bounds.extend(latLng(point[0], point[1])); any = true; });
+      remainingRoute().forEach(function (point) { bounds.extend(latLng(point[0], point[1])); any = true; });   /* not the part already passed */
       if (!any) return;
       /* the top padding also clears the pin and its label, which stand ~62px above the customer's point */
       map.fitBounds(bounds, { top: topOverlay() + 70, right: 50, bottom: 40, left: 50 });
@@ -1377,6 +1461,7 @@ function boot(options) {
           accuracyCircle.setRadius(accuracy);
         }
       }
+      if (updateRouteProgress(state.fix)) trimRouteLine();   /* the road already driven stops being drawn */
       if (follow) followTech();
       ensureRoute();
     }
@@ -2683,6 +2768,7 @@ function boot(options) {
         if (DRIVING_STAGES[state.stage] && (!state.route || state.route.length < 2)) {
           var keptRoute = loadRoute() || (typeof state.detail.route_polyline === 'string' ? state.detail.route_polyline : '');
           var keptPoints = keptRoute ? decodePolyline(keptRoute) : [];
+          /* drawn at once; the first position then trims it to the part still ahead (moveTech -> updateRouteProgress) */
           if (keptPoints.length >= 2) state.route = keptPoints;
         }
         showTrip();
