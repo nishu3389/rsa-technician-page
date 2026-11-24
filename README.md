@@ -37,3 +37,6 @@ in the URL (otherwise anyone can craft a link that sends the job token to a serv
 
 ## Google Maps key
 `config.json` holds a browser key for the map and the Start-trip route. It is public by design in a static page, so it must be restricted in Google Cloud: **Websites** `https://nishu3389.github.io/*` (plus `http://localhost:*/*` for testing) and the **Maps JavaScript API** (and **Routes API**) only. A link can still override it with `&maps_key=`.
+
+## Which API the page uses
+`&api=<url>` in the link wins. With no `api` in the link the page uses `apiBase` from `config.json` (production, `https://gomechanic.app/api/`). `&upload_api=` overrides the photo-upload base; without it uploads go to whichever API base is in use.

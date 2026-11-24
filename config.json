@@ -1,5 +1,5 @@
 {
-  "apiBase": "",
+  "apiBase": "https://gomechanic.app/api/",
   "uploadApiBase": "",
   "googleMapsKey": "AIzaSyC_4em1fAO4npTjMlJB1EY2XeDwD685Po0",
   "googleRoutesKey": "",
