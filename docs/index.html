@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title>Roadside assistance job</title>
-<script>window.RSA_CONFIG = {"apiBase":"https://gomechanic.app/api/","uploadApiBase":"","googleMapsKey":"AIzaSyC_4em1fAO4npTjMlJB1EY2XeDwD685Po0","googleRoutesKey":"","allowQueryApi":true,"ngrokSkipWarning":true};</script>
+<script>window.RSA_CONFIG = {"apiBase":"https://stereo-preamble-deafening.ngrok-free.dev/api/","uploadApiBase":"https://stereo-preamble-deafening.ngrok-free.dev/api/","googleMapsKey":"AIzaSyC_4em1fAO4npTjMlJB1EY2XeDwD685Po0","googleRoutesKey":"","allowQueryApi":true,"ngrokSkipWarning":true};</script>
 </head>
 <body>
 <div id="rsa-job"></div>
@@ -683,9 +683,12 @@ function boot(options) {
 
     function postForm(url, form) {
       if (destroyed) return halted();
+      var headers = authHeaders({ 'Accept': 'application/json' });
+      /* ngrok's free tier answers browser requests with an HTML warning page unless this header is sent */
+      if (/ngrok/i.test(url)) headers['ngrok-skip-browser-warning'] = '1';
       return fetch(url, {
         method: 'POST',
-        headers: authHeaders({ 'Accept': 'application/json' }),
+        headers: headers,
         credentials: 'same-origin',
         body: form
       }).then(readJson);

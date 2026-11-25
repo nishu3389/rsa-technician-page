@@ -306,9 +306,12 @@ export default function boot(options) {
 
     function postForm(url, form) {
       if (destroyed) return halted();
+      var headers = authHeaders({ 'Accept': 'application/json' });
+      /* ngrok's free tier answers browser requests with an HTML warning page unless this header is sent */
+      if (/ngrok/i.test(url)) headers['ngrok-skip-browser-warning'] = '1';
       return fetch(url, {
         method: 'POST',
-        headers: authHeaders({ 'Accept': 'application/json' }),
+        headers: headers,
         credentials: 'same-origin',
         body: form
       }).then(readJson);
