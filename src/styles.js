@@ -184,6 +184,8 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   flex: 1 1 0; aspect-ratio: 1; border-radius: 12px; background: #f4f5f7; border: 1.5px dashed #d3d8dd;
   display: flex; align-items: center; justify-content: center; color: #9aa4ae; font-size: 12px; overflow: hidden;
 }
+#rsa-job .shot.empty { cursor: pointer; color: #6b7885; }
+#rsa-job .shot.empty:active { background: #fff6dc; border-color: #f9c22e; color: #7a5b00; }
 #rsa-job .shot.done { border-style: solid; border-color: #1f9d55; background: #eef8f1; color: #1f9d55; font-weight: 700; }
 #rsa-job .shot img { width: 100%; height: 100%; object-fit: cover; }
 #rsa-job .done-line { display: flex; align-items: center; gap: 8px; color: #1f9d55; font-weight: 700; }

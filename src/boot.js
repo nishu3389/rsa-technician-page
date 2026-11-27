@@ -2094,7 +2094,17 @@ export default function boot(options) {
         } else if (shot) {
           tile.textContent = '\u2713';
         } else {
-          tile.textContent = String(i + 1);
+          /* an empty tile works like the Take photo button: it opens the camera for the next photo (they fill in order) */
+          tile.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">' +
+            '<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+          tile.className += ' empty';
+          tile.setAttribute('role', 'button');
+          tile.setAttribute('tabindex', '0');
+          tile.setAttribute('aria-label', 'Take photo ' + (uploaded + 1) + ' of ' + total);
+          tile.addEventListener('click', takePhoto);
+          tile.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); takePhoto(); }
+          });
         }
         wrap.appendChild(tile);
       }
@@ -2220,6 +2230,7 @@ export default function boot(options) {
     }
 
     function takePhoto() {
+      if (!PHOTO_STAGES[state.stage]) return;
       if (state.photoBusy || state.photos.length >= state.minPhotos || camera.open) return;
       setNotice('photos-notice', null);
       if (demo) { byId('camera').click(); return; }

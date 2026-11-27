@@ -378,6 +378,8 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   flex: 1 1 0; aspect-ratio: 1; border-radius: 12px; background: #f4f5f7; border: 1.5px dashed #d3d8dd;
   display: flex; align-items: center; justify-content: center; color: #9aa4ae; font-size: 12px; overflow: hidden;
 }
+#rsa-job .shot.empty { cursor: pointer; color: #6b7885; }
+#rsa-job .shot.empty:active { background: #fff6dc; border-color: #f9c22e; color: #7a5b00; }
 #rsa-job .shot.done { border-style: solid; border-color: #1f9d55; background: #eef8f1; color: #1f9d55; font-weight: 700; }
 #rsa-job .shot img { width: 100%; height: 100%; object-fit: cover; }
 #rsa-job .done-line { display: flex; align-items: center; gap: 8px; color: #1f9d55; font-weight: 700; }
@@ -2480,7 +2482,17 @@ function boot(options) {
         } else if (shot) {
           tile.textContent = '\u2713';
         } else {
-          tile.textContent = String(i + 1);
+          /* an empty tile works like the Take photo button: it opens the camera for the next photo (they fill in order) */
+          tile.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">' +
+            '<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+          tile.className += ' empty';
+          tile.setAttribute('role', 'button');
+          tile.setAttribute('tabindex', '0');
+          tile.setAttribute('aria-label', 'Take photo ' + (uploaded + 1) + ' of ' + total);
+          tile.addEventListener('click', takePhoto);
+          tile.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); takePhoto(); }
+          });
         }
         wrap.appendChild(tile);
       }
@@ -2606,6 +2618,7 @@ function boot(options) {
     }
 
     function takePhoto() {
+      if (!PHOTO_STAGES[state.stage]) return;
       if (state.photoBusy || state.photos.length >= state.minPhotos || camera.open) return;
       setNotice('photos-notice', null);
       if (demo) { byId('camera').click(); return; }
