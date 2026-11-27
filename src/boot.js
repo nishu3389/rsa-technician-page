@@ -128,8 +128,8 @@ export default function boot(options) {
     var PHOTO_STAGES = { working: 1 };
     /* "I have reached" is only offered within ARRIVE_RADIUS_M of the customer. Once locked it re-opens at <= the radius and
        re-locks only above the wider ARRIVE_RELOCK_M, so a jittering fix does not flicker the button. */
-    var ARRIVE_RADIUS_M = 200;
-    var ARRIVE_RELOCK_M = 250;
+    var ARRIVE_RADIUS_M = 300;   /* matches the backend's reached / verify_otp radius */
+    var ARRIVE_RELOCK_M = 350;
     /* Unlock when distance - accuracy <= ARRIVE_RADIUS_M (GPS error counts in the technician's favour); once unlocked,
        re-lock only when distance > ARRIVE_RELOCK_M. wasLocked is null before the first known distance, which is
        evaluated strictly against the radius. */
