@@ -15,18 +15,27 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
 #rsa-job header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 20;
   background: #101820; color: #fff;
-  /* a standard Android toolbar: 56px of content below the status-bar inset, title and actions on one row */
+  /* a standard Android toolbar: 56px of content below the status-bar inset, on one row: the job status on the left,
+     the location-sending and Test drive switches on the right */
   height: calc(56px + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 12px 0 16px;
-  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "brand stage sim" "title stage sim";
-  align-content: center; align-items: center; column-gap: 10px;
+  padding: env(safe-area-inset-top) 10px 0 12px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "stage . send sim";
+  align-content: center; align-items: center; column-gap: 8px;
 }
-#rsa-job header .brand { grid-area: brand; font-size: 10px; line-height: 13px; letter-spacing: .10em; text-transform: uppercase; color: #9fb0c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#rsa-job header h1 { grid-area: title; margin: 1px 0 0; font-size: 17px; line-height: 21px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the brand line and page title are not shown: only the status sits in the toolbar */
+#rsa-job header .brand, #rsa-job header h1 { display: none; }
 #rsa-job header .stage {
-  grid-area: stage; justify-self: end; display: inline-block; margin: 0; padding: 3px 10px; border-radius: 999px;
+  grid-area: stage; justify-self: start; display: inline-block; margin: 0; padding: 4px 10px; border-radius: 999px;
   background: #f9c22e; color: #101820; font-size: 12px; font-weight: 700; white-space: nowrap;
 }
+#rsa-job .tb-switch {
+  justify-self: end; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 10px; border-radius: 999px;
+  background: rgba(255, 255, 255, .14); color: #fff; font: 600 11px/1.2 system-ui, -apple-system, sans-serif;
+  white-space: nowrap; cursor: pointer;
+}
+#rsa-job .tb-switch input { margin: 0; flex: none; }
+#rsa-job .tb-switch span { overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+#rsa-job .tb-switch.off { background: rgba(217, 48, 37, .85); }
 
 /* ---------- start / details view ---------- */
 #rsa-job #view-assigning { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: calc(var(--rsa-header-h, 56px) + 16px) 14px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; }

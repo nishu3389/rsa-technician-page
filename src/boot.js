@@ -36,6 +36,10 @@ var ROUTE_REDRAW_M = 4;      /* redraw the line only after the technician has ad
 /* ---- TESTING ONLY: "Simulate drive" switch. Everything for it is behind SHOW_TEST_SWITCH: set it to false and the switch is
    not rendered and the page behaves exactly as before. (Search for "Simulate drive" to find every piece.) ---- */
 var SHOW_TEST_SWITCH = true;
+
+/* "Sending location in Xs" checkbox in the toolbar. Checked on every page open; unchecked, the location API (T3) is
+   not called at all - neither by the real poll nor by Simulate drive - and nothing is queued to send later. */
+var SHOW_SEND_SWITCH = true;
 var SIM_SPEED_KMH = 30;                       /* constant simulated speed along the route */
 var SIM_START = { latitude: 28.413358314787086, longitude: 77.04384214475694 };   /* Sector 49, Gurgaon */
 var SIM_ARRIVE_M = 20;                        /* stop (after posting the last point) within this distance of the customer pin */
@@ -189,6 +193,8 @@ export default function boot(options) {
       lastPostAt: 0,
       buffer: [],
       interval: 15,
+      sendOn: true,          /* toolbar checkbox: false = do not call the location API */
+      nextPostAt: 0,         /* Date.now() of the next real-poll post, for the countdown */
       otpBusy: false,
       photoBusy: false,
       photos: [],
@@ -1527,11 +1533,13 @@ export default function boot(options) {
       if (demo) return;
       if (sim.on) { simDrive(); return; }   /* Simulate drive: the virtual driver posts, not the real poll */
       var seconds = state.interval || 15;
+      state.nextPostAt = Date.now() + seconds * 1000;
       state.pollTimer = setTimeout(function () { sendLocation().then(schedulePoll); }, seconds * 1000);
     }
 
     /* T3: positions only (max 20 points). The route is drawn once at Start (T2) and is never sent here. */
     function sendLocation() {
+      if (!state.sendOn) return Promise.resolve();   /* toolbar checkbox off: no call, nothing queued */
       if (!DRIVING_STAGES[state.stage]) return Promise.resolve();
       if (!state.fix) return Promise.resolve();
 
@@ -1611,9 +1619,7 @@ export default function boot(options) {
 
     function simRender() {
       if (sim.toggle) sim.toggle.checked = sim.on;
-      if (sim.badge) sim.badge.style.display = sim.on ? 'block' : 'none';
-      var brand = root.querySelector('header .brand');
-      if (brand) brand.style.display = sim.on ? 'none' : '';
+      renderSendSwitch();
     }
 
     function simHalt() {
@@ -1706,7 +1712,7 @@ export default function boot(options) {
     }
 
     function simPost() {
-      if (sim.busy || !sim.fix) return;
+      if (sim.busy || !sim.fix || !state.sendOn) return;   /* toolbar checkbox off: the drive goes on, nothing is posted */
       sim.busy = true;
       var run = sim.run;
       sim.pending.push({
@@ -1856,47 +1862,91 @@ export default function boot(options) {
       if (header) header.style.zIndex = up ? '1001' : '';
     }
 
-    function simBuildUi() {
-      if (!SHOW_TEST_SWITCH || demo) return;
-      var header = root.querySelector('header');
-      if (!header) return;
-      var box = document.createElement('div');
-      box.id = 'sim-switch';
-      box.setAttribute('style', 'grid-area:sim;justify-self:end;display:flex;align-items:center;min-width:0;' +
-        'font:600 11px/1.2 system-ui,-apple-system,sans-serif');
-      var label = document.createElement('label');
-      label.title = 'Test: simulate drive';
-      label.setAttribute('style', 'display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.14);color:#fff;' +
-        'padding:5px 9px;border-radius:999px;cursor:pointer;white-space:nowrap');
+    /* A checkbox pill in the toolbar (Test drive, Sending location). */
+    function toolbarSwitch(id, area, label) {
+      var box = document.createElement('label');
+      box.className = 'tb-switch';
+      box.style.gridArea = area;
+      box.title = label;
       var input = document.createElement('input');
       input.type = 'checkbox';
-      input.id = 'sim-toggle';
-      input.setAttribute('aria-label', 'Test: simulate drive');
-      input.setAttribute('style', 'margin:0');
+      input.id = id;
+      input.setAttribute('aria-label', label);
       var text = document.createElement('span');
-      function setText() {   /* shorter on a phone: the toolbar is one row, and the labels must never run into each other */
-        var w = window.innerWidth;
-        text.textContent = w >= 640 ? 'Test: simulate drive' : (w >= 360 ? 'Test drive' : 'Sim');
-        if (sim.badge) sim.badge.textContent = w >= 360 ? 'SIMULATED DRIVE' : 'SIMULATED';
-      }
+      box.appendChild(input);
+      box.appendChild(text);
+      root.querySelector('header').appendChild(box);
+      injected.push(box);                 /* removed again on teardown */
+      return { box: box, input: input, text: text };
+    }
+
+    function simBuildUi() {
+      if (!SHOW_TEST_SWITCH || demo || !root.querySelector('header')) return;
+      var ui = toolbarSwitch('sim-toggle', 'sim', 'Test: simulate drive');
+      function setText() { ui.text.textContent = window.innerWidth >= 640 ? 'Test: simulate drive' : 'Test drive'; }
       addWindowListener('resize', setText);
-      label.appendChild(input);
-      label.appendChild(text);
-      box.appendChild(label);
-      /* while it is on, this red label takes the place of the brand line above the title */
-      var badge = document.createElement('div');
-      badge.id = 'sim-badge';
-      badge.textContent = 'SIMULATED DRIVE';
-      badge.setAttribute('style', 'grid-area:brand;display:none;align-self:center;justify-self:start;background:#d93025;color:#fff;' +
-        'font:700 10px/13px system-ui,-apple-system,sans-serif;letter-spacing:.08em;padding:1px 8px;border-radius:999px;white-space:nowrap;' +
-        'min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis');
-      header.appendChild(badge);
-      header.appendChild(box);
-      injected.push(box, badge);          /* removed again on teardown */
-      sim.toggle = input;
-      sim.badge = badge;
       setText();
-      input.addEventListener('change', function () { if (input.checked) simTurnOn(null); else simTurnOff(); });
+      sim.toggle = ui.input;
+      ui.input.addEventListener('change', function () { if (ui.input.checked) simTurnOn(null); else simTurnOff(); });
+    }
+
+    /* ---------------- "Sending location in Xs" (toolbar) ---------------- */
+
+    var sendUi = null, sendTimer = null;
+
+    /* Seconds to the next location post, or null when no post is scheduled (not driving, or not polling). */
+    function secondsToNextPost() {
+      if (demo || !DRIVING_STAGES[state.stage]) return null;
+      var next = 0;
+      if (sim.on) {
+        if (!sim.timer) return null;
+        next = sim.lastPostAt + (state.interval || 15) * 1000;
+      } else {
+        if (!state.pollTimer) return null;
+        next = state.nextPostAt;
+      }
+      return Math.max(0, Math.ceil((next - Date.now()) / 1000));
+    }
+
+    function renderSendSwitch() {
+      if (!sendUi) return;
+      sendUi.input.checked = state.sendOn;
+      var wide = window.innerWidth >= 400;
+      var secs = state.sendOn ? secondsToNextPost() : null;
+      var label;
+      if (!state.sendOn) label = wide ? 'Location sending off' : 'Location off';
+      else if (secs === null) label = wide ? 'Sending location' : 'Location on';
+      else label = (wide ? 'Sending location in ' : 'Location in ') + secs + 's';
+      sendUi.text.textContent = label;
+      sendUi.box.classList.toggle('off', !state.sendOn);
+    }
+
+    /* Restart the real poll with an immediate post of the latest fix (no wait for a fresh GPS read). */
+    function postLocationNow() {
+      if (demo || sim.on || destroyed || !DRIVING_STAGES[state.stage] || !state.pollTimer) return;
+      clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+      state.nextPostAt = Date.now();
+      sendLocation().then(function () {
+        if (!destroyed && DRIVING_STAGES[state.stage] && !state.pollTimer && !sim.on) schedulePoll();
+      });
+    }
+
+    function sendBuildUi() {
+      if (!SHOW_SEND_SWITCH || demo || !root.querySelector('header')) return;
+      sendUi = toolbarSwitch('send-toggle', 'send', 'Send my location');
+      sendUi.input.checked = true;
+      sendUi.input.addEventListener('change', function () {
+        state.sendOn = sendUi.input.checked;
+        if (state.sendOn) {
+          /* switched back on: send now rather than waiting out the rest of the interval */
+          if (sim.on) sim.lastPostAt = 0; else postLocationNow();
+        }
+        renderSendSwitch();
+      });
+      addWindowListener('resize', renderSendSwitch);
+      sendTimer = setInterval(renderSendSwitch, 1000);
+      renderSendSwitch();
     }
 
     /* ---------------- T5: arrival OTP ---------------- */
@@ -2452,6 +2502,7 @@ export default function boot(options) {
       document.head.appendChild(script);
     }
 
+    sendBuildUi();  /* "Sending location in Xs" checkbox (renders nothing when SHOW_SEND_SWITCH is false) */
     simBuildUi();   /* Simulate drive switch (testing only; renders nothing when SHOW_TEST_SWITCH is false) */
     withGoogleMaps(startPage);
 
@@ -2462,6 +2513,7 @@ export default function boot(options) {
       document.removeEventListener('visibilitychange', stopCameraWhenHidden);
       document.removeEventListener('visibilitychange', onVisibility);
       if (gpsTimer) { clearInterval(gpsTimer); gpsTimer = null; }
+      if (sendTimer) { clearInterval(sendTimer); sendTimer = null; }
       if (wakeLock) { var held = wakeLock; wakeLock = null; held.release().catch(noop); }
       if (markerAnimation) { cancelAnimationFrame(markerAnimation); markerAnimation = null; }
       window.gm_authFailure = previousAuthFailure;
