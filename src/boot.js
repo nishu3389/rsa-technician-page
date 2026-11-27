@@ -26,8 +26,8 @@ var ROUTE_RETRY_MS = 30000;           /* wait between those fetches after a fail
 var MARKER_LABEL_CUSTOMER = 'Customer';
 var MARKER_LABEL_TECH = 'You';
 
-/* The route line shrinks as the technician drives: the part already passed is not drawn. It is worked out on the page
-   from the route we already have, so it costs nothing and never asks Google for a new route. */
+/* The whole route stays drawn: the part already driven turns grey, the part still ahead stays blue. Progress is worked
+   out on the page from the route we already have, so it costs nothing and never asks Google for a new route. */
 var ROUTE_OFF_M = 80;        /* further than this from the route (or twice the GPS accuracy): off route, leave the line alone */
 var ROUTE_BACK_M = 40;       /* how far behind the last matched point a fix may land (GPS jitter) before it is ignored */
 var ROUTE_AHEAD_M = 1500;    /* first look this far ahead along the route; only if that fails, look along the rest of it */
@@ -888,7 +888,7 @@ export default function boot(options) {
       refreshView();
     }
 
-    /* ---- route progress: where the technician is along the route, so the passed part can be left out ---- */
+    /* ---- route progress: where the technician is along the route, so the driven part can be greyed out ---- */
     var routeGeo = null;   /* { src, cum, idx, t, along, snapped, off, drawnAlong } for the route array now in state.route */
 
     function routeGeometry() {
@@ -954,12 +954,28 @@ export default function boot(options) {
       return out;
     }
 
-    /* Shorten the lines already on the map (no new objects, no network). */
+    /* The route already driven: from the start to the matched point on the road ([] before any match). */
+    function passedRoute() {
+      var r = state.route;
+      if (!r || r.length < 2) return [];
+      var g = routeGeometry();
+      if (!g.snapped) return [];
+      var out = r.slice(0, g.idx + 1);
+      out.push(g.snapped);
+      return out;
+    }
+
+    function toPath(points) {
+      return points.length >= 2 ? points.map(function (point) { return latLng(point[0], point[1]); }) : [];
+    }
+
+    /* Move the grey / blue split on the lines already on the map (no new objects, no network).
+       routeLines = [driven casing, driven line, ahead casing, ahead line]. */
     function trimRouteLine() {
-      var rem = remainingRoute();
-      if (rem.length < 2) { clearRouteLines(); return; }
-      var path = rem.map(function (point) { return latLng(point[0], point[1]); });
-      if (routeLines.length === 2) { routeLines[0].setPath(path); routeLines[1].setPath(path); } else drawRouteLine();
+      if (routeLines.length !== 4) { drawRouteLine(); return; }
+      var passed = toPath(passedRoute()), ahead = toPath(remainingRoute());
+      routeLines[0].setPath(passed); routeLines[1].setPath(passed);
+      routeLines[2].setPath(ahead); routeLines[3].setPath(ahead);
     }
 
     function clearRouteLines() {
@@ -973,13 +989,14 @@ export default function boot(options) {
       /* Only a real road route is ever drawn. Without one the map shows just the two markers while ensureRoute()
          fetches it; a straight or dashed line would point the technician across buildings. */
       if (!state.route || state.route.length < 2) return;
-      if (state.fix) updateRouteProgress(state.fix);   /* a (re)drawn route starts at the technician at once, not at the next fix */
-      var rem = remainingRoute();   /* only what is still ahead of the technician */
-      if (rem.length < 2) return;
-      var path = rem.map(function (point) { return latLng(point[0], point[1]); });
-      routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#ffffff', strokeOpacity: 0.95, strokeWeight: 9, zIndex: 1, clickable: false }));
-      /* blue, not the brand yellow: the traffic layer paints roads green / orange / red and yellow got lost among them */
-      routeLines.push(new G.Polyline({ map: map, path: path, strokeColor: '#1557c0', strokeOpacity: 1, strokeWeight: 5, zIndex: 2, clickable: false }));
+      if (state.fix) updateRouteProgress(state.fix);   /* a (re)drawn route is split at the technician at once, not at the next fix */
+      var passed = toPath(passedRoute()), ahead = toPath(remainingRoute());
+      /* driven: grey and a little thinner, under the road still ahead */
+      routeLines.push(new G.Polyline({ map: map, path: passed, strokeColor: '#ffffff', strokeOpacity: 0.9, strokeWeight: 8, zIndex: 1, clickable: false }));
+      routeLines.push(new G.Polyline({ map: map, path: passed, strokeColor: '#9aa4ae', strokeOpacity: 1, strokeWeight: 4, zIndex: 2, clickable: false }));
+      /* ahead: blue, not the brand yellow - the traffic layer paints roads green / orange / red and yellow got lost among them */
+      routeLines.push(new G.Polyline({ map: map, path: ahead, strokeColor: '#ffffff', strokeOpacity: 0.95, strokeWeight: 9, zIndex: 3, clickable: false }));
+      routeLines.push(new G.Polyline({ map: map, path: ahead, strokeColor: '#1557c0', strokeOpacity: 1, strokeWeight: 5, zIndex: 4, clickable: false }));
     }
 
     /* Pixels at the top of the map covered by the header and the ETA pill (the sheet is kept off the map, see syncMapInset). */
@@ -1000,7 +1017,7 @@ export default function boot(options) {
       var pin = pinLatLng();
       if (pin) { bounds.extend(pin); any = true; }
       if (state.fix) { bounds.extend(latLng(state.fix.latitude, state.fix.longitude)); any = true; }
-      remainingRoute().forEach(function (point) { bounds.extend(latLng(point[0], point[1])); any = true; });   /* not the part already passed */
+      (state.route || []).forEach(function (point) { bounds.extend(latLng(point[0], point[1])); any = true; });   /* the full route, driven part too */
       if (!any) return;
       /* the top padding also clears the pin and its label, which stand ~62px above the customer's point */
       map.fitBounds(bounds, { top: topOverlay() + 70, right: 50, bottom: 40, left: 50 });
@@ -1103,7 +1120,7 @@ export default function boot(options) {
           accuracyCircle.setRadius(accuracy);
         }
       }
-      if (updateRouteProgress(state.fix)) trimRouteLine();   /* the road already driven stops being drawn */
+      if (updateRouteProgress(state.fix)) trimRouteLine();   /* the road already driven turns grey */
       if (follow) followTech();
       ensureRoute();
     }
