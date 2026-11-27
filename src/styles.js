@@ -18,7 +18,7 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   /* a standard Android toolbar: 56px of content below the status-bar inset, title and actions on one row */
   height: calc(56px + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 12px 0 16px;
-  display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; grid-template-areas: "brand stage loc sim" "title stage loc sim";
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "brand stage sim" "title stage sim";
   align-content: center; align-items: center; column-gap: 10px;
 }
 #rsa-job header .brand { grid-area: brand; font-size: 10px; line-height: 13px; letter-spacing: .10em; text-transform: uppercase; color: #9fb0c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -27,44 +27,6 @@ const css = `/* Ported from the standalone rsa_technician_job.html page. Everyth
   grid-area: stage; justify-self: end; display: inline-block; margin: 0; padding: 3px 10px; border-radius: 999px;
   background: #f9c22e; color: #101820; font-size: 12px; font-weight: 700; white-space: nowrap;
 }
-
-/* ---------- fixed location: toolbar pin + picker ---------- */
-#rsa-job .loc-button {
-  grid-area: loc; justify-self: end; width: 36px; height: 36px; padding: 0; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.14); color: #fff;
-}
-#rsa-job .loc-button.active { background: #f9c22e; color: #101820; }
-#rsa-job .loc-badge {
-  grid-area: brand; display: none; align-self: center; justify-self: start; min-width: 0; max-width: 100%;
-  background: #f9c22e; color: #101820; font: 700 10px/13px system-ui, -apple-system, sans-serif; letter-spacing: .06em;
-  padding: 1px 8px; border-radius: 999px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-/* above the toolbar, which is lifted to 1001 while the location dialog is up */
-#rsa-job .gate.loc-picker { z-index: 1002; }
-#rsa-job .loc-card { text-align: left; max-height: calc(100% - 32px); overflow-y: auto; }
-#rsa-job .loc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-#rsa-job .loc-head .gate-title { margin: 0; }
-#rsa-job .loc-close { width: 36px; height: 36px; border-radius: 50%; background: #f0f2f4; color: #12161c; font-size: 22px; line-height: 1; }
-#rsa-job .loc-help { margin: 6px 0 12px !important; font-size: 13px !important; color: #6b7885; }
-#rsa-job .loc-list { display: flex; flex-direction: column; gap: 8px; }
-#rsa-job .loc-row { display: flex; align-items: stretch; gap: 6px; }
-#rsa-job .loc-pick {
-  flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
-  padding: 10px 12px; border-radius: 12px; background: #f4f5f7; color: #12161c; border: 2px solid transparent !important;
-}
-#rsa-job .loc-row.active .loc-pick { border-color: #f9c22e !important; background: #fff9e6; }
-#rsa-job .loc-name { font-weight: 700; font-size: 15px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#rsa-job .loc-sub { font-size: 12px; color: #6b7885; }
-#rsa-job .loc-del { flex: 0 0 44px; border-radius: 12px; background: #f4f5f7; color: #8f1d1d; font-size: 16px; }
-#rsa-job .loc-add { margin-top: 16px; padding-top: 14px; border-top: 1px solid #f0f2f4; }
-#rsa-job .loc-add-title { margin: 0 0 8px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: #6b7885; }
-#rsa-job .loc-input {
-  display: block; width: 100%; height: 46px; margin: 0 0 8px; padding: 0 12px; border: 1.5px solid #d3d8dd; border-radius: 12px;
-  background: #fbfcfd; color: #12161c; font: inherit; font-size: 15px;
-}
-#rsa-job .loc-input:focus { outline: none; border-color: #f9c22e; background: #fff; }
-#rsa-job .loc-error { margin: 0 0 4px !important; color: #8f1d1d; font-size: 13px !important; }
-#rsa-job .loc-add .gate-btn { margin-top: 6px; }
 
 /* ---------- start / details view ---------- */
 #rsa-job #view-assigning { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: calc(var(--rsa-header-h, 56px) + 16px) 14px 24px; overflow-y: auto; -webkit-overflow-scrolling: touch; }

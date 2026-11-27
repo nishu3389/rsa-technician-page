@@ -12,23 +12,6 @@ const markup = `<header>
     <button class="gate-btn hidden" id="reload-page" type="button">Reload page</button>
   </div>
 </div>
-<div class="gate loc-picker hidden" id="loc-picker" role="dialog" aria-modal="true" aria-labelledby="loc-title">
-  <div class="gate-card loc-card">
-    <div class="loc-head">
-      <h2 class="gate-title" id="loc-title">Your location</h2>
-      <button class="loc-close" id="loc-close" type="button" aria-label="Close">&times;</button>
-    </div>
-    <p class="loc-help">Pick a place to use as your location for this job, or use this phone&rsquo;s GPS.</p>
-    <div class="loc-list" id="loc-list" role="radiogroup" aria-labelledby="loc-title"></div>
-    <div class="loc-add">
-      <h3 class="loc-add-title">Add a place</h3>
-      <input class="loc-input" id="loc-name" type="text" maxlength="40" autocomplete="off" placeholder="Name, e.g. Sector 29 office" aria-label="Place name">
-      <input class="loc-input" id="loc-coords" type="text" inputmode="decimal" autocomplete="off" placeholder="Lat, long e.g. 28.4013, 77.0446" aria-label="Latitude and longitude">
-      <p class="loc-error hidden" id="loc-error" role="alert"></p>
-      <button class="gate-btn" id="loc-add" type="button">Add and use</button>
-    </div>
-  </div>
-</div>
 <div class="camera hidden" id="camera-sheet" role="dialog" aria-modal="true" aria-label="Take photo">
   <video id="camera-preview" autoplay playsinline muted></video>
   <div class="camera-status" id="camera-status">Starting camera&hellip;</div>

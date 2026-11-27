@@ -36,19 +36,6 @@ var ROUTE_REDRAW_M = 4;      /* redraw the line only after the technician has ad
 /* ---- TESTING ONLY: "Simulate drive" switch. Everything for it is behind SHOW_TEST_SWITCH: set it to false and the switch is
    not rendered and the page behaves exactly as before. (Search for "Simulate drive" to find every piece.) ---- */
 var SHOW_TEST_SWITCH = true;
-
-/* ---- Fixed location: the pin icon in the toolbar. The technician picks a saved place (or adds one) and that point is
-   used as their position everywhere - Start trip, location posts, the arrival gate, "I have reached", OTP, photo
-   coordinates, the map - instead of the phone's GPS. Saved places and the active choice are kept in localStorage, so
-   they survive reloads and re-opened links. Set SHOW_LOCATION_PICKER to false to remove the icon entirely. ---- */
-var SHOW_LOCATION_PICKER = true;
-var FIXED_PRESETS = [
-  { name: 'Vatika chowk', latitude: 28.4013688132816, longitude: 77.04468634852745 }
-];
-var FIXED_LIST_KEY = 'rsa_fixed_locations';      /* places the technician added: [{ name, latitude, longitude }] */
-var FIXED_ACTIVE_KEY = 'rsa_fixed_location';     /* the place in use, or absent for real GPS */
-var FIXED_ACCURACY_M = 10;                       /* accuracy_m reported with the fixed point */
-var FIXED_MAX_SAVED = 20;
 var SIM_SPEED_KMH = 30;                       /* constant simulated speed along the route */
 var SIM_START = { latitude: 28.413358314787086, longitude: 77.04384214475694 };   /* Sector 49, Gurgaon */
 var SIM_ARRIVE_M = 20;                        /* stop (after posting the last point) within this distance of the customer pin */
@@ -352,7 +339,7 @@ export default function boot(options) {
     function syncStartButton() {
       var button = byId('start-trip');
       if (!button) return;
-      button.disabled = state.posting || (state.permApi && state.permission !== 'granted' && !fixedLoc.on);
+      button.disabled = state.posting || (state.permApi && state.permission !== 'granted');
     }
 
     /* Paint the blocking dialog from state.permission: prompt copy + "Allow location" button, or the blocked copy +
@@ -364,7 +351,7 @@ export default function boot(options) {
       var gate = byId('location-gate');
       if (!gate) return;
       var blocked = state.permission === 'denied';
-      var show = !(state.gateClosed || state.permission === 'granted' || fixedLoc.on);
+      var show = !(state.gateClosed || state.permission === 'granted');
       gate.classList.toggle('hidden', !show);
       simLiftHeader(show);
       gate.classList.toggle('error', blocked);
@@ -414,7 +401,7 @@ export default function boot(options) {
        "Allow location" tap, where it runs inside the click so it counts as a user gesture). Any fix it returns is kept.
        Never throws and never blocks: failures just repaint the dialog. */
     function askLocation() {
-      if (demo || destroyed || fixedLoc.on || !navigator.geolocation) return;
+      if (demo || destroyed || !navigator.geolocation) return;
       try {
         navigator.geolocation.getCurrentPosition(function (position) {
           if (destroyed) return;
@@ -475,8 +462,6 @@ export default function boot(options) {
     function currentPosition() {
       /* Simulate drive: while on, the technician's position is the virtual one, never navigator.geolocation. */
       if (sim.on && sim.fix) return Promise.resolve({ latitude: sim.fix.latitude, longitude: sim.fix.longitude, accuracy: SIM_ACCURACY_M });
-      /* Fixed location: the chosen place is the technician's position. */
-      if (fixedLoc.on) return Promise.resolve(fixedFix());
       return new Promise(function (resolve, reject) {
         if (!navigator.geolocation) { reject(new Error('no_geolocation')); return; }
         navigator.geolocation.getCurrentPosition(
@@ -682,7 +667,6 @@ export default function boot(options) {
 
     function setFix(fix) {
       if (sim.on) return;   /* Simulate drive: real GPS fixes are ignored while the virtual position drives state.fix */
-      if (fixedLoc.on) return;   /* Fixed location: real GPS fixes are ignored */
       state.fix = fix;
       state.serverAway = null;
       noteFix(fix);
@@ -1457,7 +1441,7 @@ export default function boot(options) {
 
     function startTrip() {
       if (state.posting) return;
-      if (!demo && !fixedLoc.on && state.permApi && state.permission !== 'granted') { renderLocationGate(); return; }
+      if (!demo && state.permApi && state.permission !== 'granted') { renderLocationGate(); return; }
       if (demo) {
         state.fix = DEMO_FIX;
         state.route = DEMO_ROUTE;
@@ -1523,7 +1507,7 @@ export default function boot(options) {
     }
 
     function watchPosition() {
-      if (demo || sim.on || fixedLoc.on) return;
+      if (demo || sim.on) return;
       if (!navigator.geolocation || state.watchId !== null) return;
       state.watchStartedAt = Date.now();
       state.watchId = navigator.geolocation.watchPosition(function (position) {
@@ -1628,7 +1612,8 @@ export default function boot(options) {
     function simRender() {
       if (sim.toggle) sim.toggle.checked = sim.on;
       if (sim.badge) sim.badge.style.display = sim.on ? 'block' : 'none';
-      fixedRender();   /* the brand line and the fixed-location badge depend on both modes */
+      var brand = root.querySelector('header .brand');
+      if (brand) brand.style.display = sim.on ? 'none' : '';
     }
 
     function simHalt() {
@@ -1777,8 +1762,7 @@ export default function boot(options) {
 
       var startAt = (resume && isFinite(Number(resume.latitude)) && isFinite(Number(resume.longitude)))
         ? { latitude: Number(resume.latitude), longitude: Number(resume.longitude) }
-        : (fixedLoc.on ? { latitude: fixedLoc.latitude, longitude: fixedLoc.longitude }
-          : { latitude: SIM_START.latitude, longitude: SIM_START.longitude });
+        : { latitude: SIM_START.latitude, longitude: SIM_START.longitude };
       simSetPosition(startAt.latitude, startAt.longitude);   /* the static location: the marker is there when the map shows */
       simRender();
 
@@ -1844,13 +1828,6 @@ export default function boot(options) {
       simRender();
       if (destroyed) return;
       if (state.stage === 'assigning') setNotice('start-notice', null);
-      if (fixedLoc.on) {
-        /* Back to the fixed place (not the tester's real GPS), and the normal poll posts it again. */
-        setNotice('trip-notice', null);
-        applyFixedFix();
-        if (DRIVING_STAGES[state.stage] && !state.pollTimer) schedulePoll();
-        return;
-      }
       /* Back to the real GPS path (marker, arrival gate and manual steps read the real position again). Nothing is posted
          automatically any more: the real poll is deliberately NOT restarted, or it would move the technician to the
          tester's real location. A reload restores the normal full behaviour. The trip stays as it is on the server. */
@@ -1874,7 +1851,7 @@ export default function boot(options) {
     /* The header is a fixed bar over both views. While the blocking location dialog is up, the header is lifted above it,
        otherwise the switch (the way past "no GPS") would be unreachable exactly when it is needed. */
     function simLiftHeader(up) {
-      if (!sim.toggle && !fixedLoc.button) return;   /* the pin icon must also stay reachable over the dialog */
+      if (!SHOW_TEST_SWITCH || !sim.toggle) return;
       var header = root.querySelector('header');
       if (header) header.style.zIndex = up ? '1001' : '';
     }
@@ -1920,246 +1897,6 @@ export default function boot(options) {
       sim.badge = badge;
       setText();
       input.addEventListener('change', function () { if (input.checked) simTurnOn(null); else simTurnOff(); });
-    }
-
-
-    /* ================= Fixed location (pin icon in the toolbar; see SHOW_LOCATION_PICKER) ================= */
-
-    var fixedLoc = { on: false, name: '', latitude: null, longitude: null, button: null, badge: null };
-
-    function fixedFix() {
-      return { latitude: fixedLoc.latitude, longitude: fixedLoc.longitude, accuracy: FIXED_ACCURACY_M };
-    }
-
-    function fixedSaved() {
-      try {
-        var list = JSON.parse(window.localStorage.getItem(FIXED_LIST_KEY) || '[]');
-        return Array.isArray(list) ? list.filter(validPlace) : [];
-      } catch (error) { return []; }
-    }
-
-    function fixedStoreSaved(list) {
-      try { window.localStorage.setItem(FIXED_LIST_KEY, JSON.stringify(list)); } catch (error) { /* storage blocked */ }
-    }
-
-    function validPlace(place) {
-      return !!place && typeof place.name === 'string' && place.name.trim() !== '' &&
-        isFinite(Number(place.latitude)) && isFinite(Number(place.longitude)) &&
-        Math.abs(Number(place.latitude)) <= 90 && Math.abs(Number(place.longitude)) <= 180;
-    }
-
-    /* Presets first, then the technician's own places (a saved place may not reuse a preset's name). */
-    function fixedPlaces() {
-      var presetNames = FIXED_PRESETS.map(function (place) { return place.name.toLowerCase(); });
-      return FIXED_PRESETS.map(function (place) { return { name: place.name, latitude: place.latitude, longitude: place.longitude, preset: true }; })
-        .concat(fixedSaved().filter(function (place) { return presetNames.indexOf(place.name.toLowerCase()) === -1; }));
-    }
-
-    /* Put the fixed place in as the current fix, exactly as a GPS fix would arrive. */
-    function applyFixedFix() {
-      state.fix = fixedFix();
-      state.serverAway = null;
-      state.heading = null;      /* a jump, not a drive: no direction of travel */
-      headingFrom = null;
-      noteFix(state.fix);
-      setPermission('granted');
-      updateGate();
-      moveTech();
-      renderLocationGate();
-    }
-
-    /* place = { name, latitude, longitude } to use it, or null for the phone's GPS. */
-    function fixedSelect(place) {
-      if (place) {
-        fixedLoc.on = true;
-        fixedLoc.name = place.name;
-        fixedLoc.latitude = Number(place.latitude);
-        fixedLoc.longitude = Number(place.longitude);
-        try {
-          window.localStorage.setItem(FIXED_ACTIVE_KEY, JSON.stringify({ name: fixedLoc.name, latitude: fixedLoc.latitude, longitude: fixedLoc.longitude }));
-        } catch (error) { /* storage blocked: it lasts until the page closes */ }
-        stopWatch();
-        if (!sim.on) {             /* while Simulate drive runs, it owns the position; this place takes over when it stops */
-          applyFixedFix();
-          resumeTracking();        /* mid-trip: post the new position now rather than at the next tick */
-        }
-      } else {
-        fixedLoc.on = false;
-        fixedLoc.name = '';
-        try { window.localStorage.removeItem(FIXED_ACTIVE_KEY); } catch (error) { /* ignore */ }
-        if (!sim.on) {
-          state.fix = null;
-          state.serverAway = null;
-          state.heading = null;
-          headingFrom = null;
-          updateGate();
-          watchPermission();       /* re-read the real permission (the fixed place had stood in for it) */
-          renderLocationGate();
-          askLocation();
-          if (DRIVING_STAGES[state.stage]) watchPosition();
-        }
-      }
-      syncStartButton();
-      fixedRender();
-    }
-
-    function fixedRestore() {
-      if (!SHOW_LOCATION_PICKER || demo) return;
-      var saved = null;
-      try { saved = JSON.parse(window.localStorage.getItem(FIXED_ACTIVE_KEY) || 'null'); } catch (error) { saved = null; }
-      if (validPlace(saved)) fixedSelect(saved);
-    }
-
-    function fixedRender() {
-      var brand = root.querySelector('header .brand');
-      if (brand) brand.style.display = (sim.on || fixedLoc.on) ? 'none' : '';
-      if (fixedLoc.badge) {
-        fixedLoc.badge.style.display = (fixedLoc.on && !sim.on) ? 'block' : 'none';
-        fixedLoc.badge.textContent = fixedLoc.name;   /* name only: the toolbar is one row on a phone */
-        fixedLoc.badge.title = 'Using fixed location: ' + fixedLoc.name;
-      }
-      if (fixedLoc.button) {
-        fixedLoc.button.classList.toggle('active', fixedLoc.on);
-        fixedLoc.button.setAttribute('aria-label', fixedLoc.on ? 'Location: ' + fixedLoc.name + '. Change location' : 'Set a custom location');
-        fixedLoc.button.title = fixedLoc.on ? 'Location: ' + fixedLoc.name : 'Set a custom location';
-      }
-    }
-
-    /* "28.4013, 77.0446" (comma and/or spaces) -> { latitude, longitude }, or null. */
-    function parseLatLng(value) {
-      var m = /^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(String(value || ''));
-      if (!m) return null;
-      var lat = Number(m[1]), lng = Number(m[2]);
-      if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-      return { latitude: lat, longitude: lng };
-    }
-
-    function coordText(place) {
-      return Number(place.latitude).toFixed(6) + ', ' + Number(place.longitude).toFixed(6);
-    }
-
-    function fixedRow(place, index, active) {
-      var row = document.createElement('div');
-      row.className = 'loc-row' + (active ? ' active' : '');
-      var pick = document.createElement('button');
-      pick.type = 'button';
-      pick.className = 'loc-pick';
-      pick.setAttribute('role', 'radio');
-      pick.setAttribute('aria-checked', active ? 'true' : 'false');
-      pick.setAttribute('data-index', String(index));
-      var name = document.createElement('span');
-      name.className = 'loc-name';
-      name.textContent = place ? place.name : 'This phone’s GPS';
-      var sub = document.createElement('span');
-      sub.className = 'loc-sub';
-      sub.textContent = place ? coordText(place) : 'Your real location';
-      pick.appendChild(name);
-      pick.appendChild(sub);
-      row.appendChild(pick);
-      if (place && !place.preset) {
-        var del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'loc-del';
-        del.setAttribute('data-delete', place.name);
-        del.setAttribute('aria-label', 'Delete ' + place.name);
-        del.textContent = '✕';
-        row.appendChild(del);
-      }
-      return row;
-    }
-
-    function renderFixedList() {
-      var list = byId('loc-list');
-      if (!list) return;
-      list.innerHTML = '';
-      list.appendChild(fixedRow(null, -1, !fixedLoc.on));
-      fixedPlaces().forEach(function (place, index) {
-        var active = fixedLoc.on && place.name === fixedLoc.name &&
-          Math.abs(place.latitude - fixedLoc.latitude) < 1e-9 && Math.abs(place.longitude - fixedLoc.longitude) < 1e-9;
-        list.appendChild(fixedRow(place, index, active));
-      });
-    }
-
-    function fixedError(message) {
-      var el = byId('loc-error');
-      if (!el) return;
-      el.textContent = message || '';
-      el.classList.toggle('hidden', !message);
-    }
-
-    function openFixedPicker() {
-      renderFixedList();
-      fixedError(null);
-      show('loc-picker');
-    }
-
-    function closeFixedPicker() { hide('loc-picker'); }
-
-    function addFixedPlace() {
-      var name = (byId('loc-name').value || '').replace(/\s+/g, ' ').trim();
-      var at = parseLatLng(byId('loc-coords').value);
-      if (!name) { fixedError('Give the place a name.'); return; }
-      if (!at) { fixedError('Enter latitude and longitude like 28.4013, 77.0446.'); return; }
-      var taken = fixedPlaces().some(function (place) { return place.name.toLowerCase() === name.toLowerCase(); });
-      if (taken) { fixedError('A place called "' + name + '" is already saved.'); return; }
-      var saved = fixedSaved();
-      if (saved.length >= FIXED_MAX_SAVED) { fixedError('You can save up to ' + FIXED_MAX_SAVED + ' places. Delete one first.'); return; }
-      var place = { name: name, latitude: at.latitude, longitude: at.longitude };
-      saved.push(place);
-      fixedStoreSaved(saved);
-      byId('loc-name').value = '';
-      byId('loc-coords').value = '';
-      fixedSelect(place);
-      closeFixedPicker();
-    }
-
-    function bindFixedPicker() {
-      byId('loc-close').addEventListener('click', closeFixedPicker);
-      byId('loc-picker').addEventListener('click', function (event) {
-        if (event.target === byId('loc-picker')) closeFixedPicker();   /* tap on the dimmed backdrop */
-      });
-      byId('loc-add').addEventListener('click', addFixedPlace);
-      byId('loc-coords').addEventListener('keydown', function (event) { if (event.key === 'Enter') addFixedPlace(); });
-      byId('loc-list').addEventListener('click', function (event) {
-        var target = event.target && event.target.closest ? event.target : null;
-        if (!target) return;
-        var del = target.closest('[data-delete]');
-        if (del) {
-          var gone = del.getAttribute('data-delete');
-          fixedStoreSaved(fixedSaved().filter(function (place) { return place.name !== gone; }));
-          if (fixedLoc.on && fixedLoc.name === gone) fixedSelect(null);
-          renderFixedList();
-          return;
-        }
-        var pick = target.closest('[data-index]');
-        if (!pick) return;
-        var index = Number(pick.getAttribute('data-index'));
-        fixedSelect(index < 0 ? null : fixedPlaces()[index]);
-        closeFixedPicker();
-      });
-    }
-
-    function fixedBuildUi() {
-      if (!SHOW_LOCATION_PICKER || demo) return;
-      var header = root.querySelector('header');
-      if (!header || !byId('loc-picker')) return;
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.id = 'loc-button';
-      button.className = 'loc-button';
-      button.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">' +
-        '<path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z" fill="currentColor"/></svg>';
-      button.addEventListener('click', openFixedPicker);
-      var badge = document.createElement('div');
-      badge.id = 'loc-badge';
-      badge.className = 'loc-badge';
-      header.appendChild(badge);
-      header.appendChild(button);
-      injected.push(button, badge);
-      fixedLoc.button = button;
-      fixedLoc.badge = badge;
-      bindFixedPicker();
-      fixedRender();
     }
 
     /* ---------------- T5: arrival OTP ---------------- */
@@ -2645,7 +2382,6 @@ export default function boot(options) {
 
       /* Ask for location now, alongside the job fetch (also on a mid-trip reload), so the technician has already
          answered by the time they reach Start Trip. Neither call can block rendering or fail the fetch below. */
-      fixedRestore();   /* a saved fixed location replaces GPS from the start: no prompt, no watch */
       watchPermission();
       renderLocationGate();
       askLocation();
@@ -2716,7 +2452,6 @@ export default function boot(options) {
       document.head.appendChild(script);
     }
 
-    fixedBuildUi(); /* Fixed-location pin icon (renders nothing when SHOW_LOCATION_PICKER is false) */
     simBuildUi();   /* Simulate drive switch (testing only; renders nothing when SHOW_TEST_SWITCH is false) */
     withGoogleMaps(startPage);
 
