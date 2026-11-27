@@ -41,7 +41,8 @@ var SHOW_TEST_SWITCH = true;
    not called at all - neither by the real poll nor by Simulate drive - and nothing is queued to send later. */
 var SHOW_SEND_SWITCH = true;
 var SIM_SPEED_KMH = 30;                       /* constant simulated speed along the route */
-var SIM_START = { latitude: 28.413358314787086, longitude: 77.04384214475694 };   /* Sector 49, Gurgaon */
+/* Only when no real position can be read at all: Sector 49, Gurgaon. Normally the drive starts where the technician is. */
+var SIM_START = { latitude: 28.413358314787086, longitude: 77.04384214475694 };
 var SIM_ARRIVE_M = 20;                        /* stop (after posting the last point) within this distance of the customer pin */
 var SIM_ACCURACY_M = 10;                      /* accuracy_m sent with every simulated point */
 var SIM_TICK_MS = 1000;                       /* the marker moves every tick; a position is posted every location_interval_sec */
@@ -1582,13 +1583,14 @@ export default function boot(options) {
     }
 
     /* ================= Simulate drive (TESTING ONLY; everything is behind SHOW_TEST_SWITCH) =================
-       The switch is in the page header. Turning it ON replaces the technician's GPS with a virtual one and sets the static
-       location SIM_START (Sector 49, Gurgaon); nothing is sent yet. The technician then taps Start trip as usual: T2
-       (start_journey) goes out from that position with the page's own route to the customer, and the drive begins: the
-       virtual technician walks the route at SIM_SPEED_KMH and posts T3 (location, reason "stream") every
-       location_interval_sec until it is within SIM_ARRIVE_M of the pin. If the trip was already started when the switch
-       goes ON (or the page reloaded mid-drive), it drives straight away. It never calls T5 or anything after it.
-       Turning it OFF stops the timer and goes back to real GPS; the trip is left as it is on the server. */
+       The switch is in the page header. Turning it ON changes nothing about the trip - same starting position (the
+       technician's real current location), same route, same customer, same location posts on the same interval - it
+       only makes the pin move: the real GPS is set aside and a virtual technician drives along the existing route at
+       SIM_SPEED_KMH from the route point nearest where the technician is, posting T3 (location) every
+       location_interval_sec until it is within SIM_ARRIVE_M of the pin. Before Start trip, nothing moves yet: the
+       technician taps Start trip as usual (T2 goes out from their real position) and the drive begins. A route is only
+       drawn when none exists. It never calls T5 or anything after it. Turning it OFF stops the drive and goes back to the
+       real GPS and the normal location poll; the trip is left as it is on the server. */
 
     function simKey() { return SIM_STORAGE_KEY + ':' + (jobToken || jobId || ''); }
 
@@ -1766,39 +1768,57 @@ export default function boot(options) {
       if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
       stopWatch();
 
-      var startAt = (resume && isFinite(Number(resume.latitude)) && isFinite(Number(resume.longitude)))
-        ? { latitude: Number(resume.latitude), longitude: Number(resume.longitude) }
-        : { latitude: SIM_START.latitude, longitude: SIM_START.longitude };
-      simSetPosition(startAt.latitude, startAt.longitude);   /* the static location: the marker is there when the map shows */
       simRender();
-
-      if (!driving) {
-        /* Stage "assigning": only the location is set. The technician taps Start trip as usual (T2 goes out from this
-           position, with the route to the customer), and schedulePoll() then starts the drive (see simDrive). */
-        setNotice('start-notice', 'Simulated location is set. Tap Start trip to begin the drive.');
-        return;
-      }
-      setNotice(noticeId, null);
-
       function alive() { return sim.on && sim.run === run && !destroyed; }
-      function line(from) { return [[from.latitude, from.longitude], [pin.latitude, pin.longitude]]; }
-      /* Start driving along `pts` (a straight line when no road route could be had). */
-      function begin(pts) {
+
+      /* Where the drive starts: after a reload mid-drive, the last simulated position; otherwise the technician's real
+         current position (the latest fix, or one read now). SIM_START only when no position can be had at all. */
+      var savedAt = (resume && isFinite(Number(resume.latitude)) && isFinite(Number(resume.longitude)))
+        ? { latitude: Number(resume.latitude), longitude: Number(resume.longitude) } : null;
+      var realAt = (state.fix && isFinite(state.fix.latitude) && isFinite(state.fix.longitude))
+        ? { latitude: state.fix.latitude, longitude: state.fix.longitude } : null;
+      if (savedAt || realAt) { go(savedAt || realAt); return; }
+      setNotice(noticeId, 'Reading your location…');
+      currentPosition().then(function (fix) {   /* sim.fix is still empty, so this is a real GPS read */
+        if (alive()) { setNotice(noticeId, null); go({ latitude: fix.latitude, longitude: fix.longitude }); }
+      }, function () {
         if (!alive()) return;
-        var straight = !pts || pts.length < 2;
-        if (straight) pts = line(startAt);   /* the virtual driver still moves, but a straight line is never drawn */
-        simSetRoute(pts);
-        if (resume) sim.dist = simNearest(startAt);   /* resume from the route point nearest the last position */
-        if (!straight) state.route = pts;
-        drawRouteLine();
-        simDrive();
+        setNotice(noticeId, 'Could not read your location, so the test drive starts from Sector 49, Gurgaon.', true);
+        go({ latitude: SIM_START.latitude, longitude: SIM_START.longitude });
+      });
+
+      function go(startAt) {
+        simSetPosition(startAt.latitude, startAt.longitude);   /* the marker stays where the technician is */
+
+        if (!driving) {
+          /* Stage "assigning": nothing moves yet. The technician taps Start trip as usual (T2 goes out from this position,
+             with the route to the customer), and schedulePoll() then starts the drive (see simDrive). */
+          setNotice('start-notice', 'Test drive is on. Tap Start trip and your pin will drive along the route.');
+          return;
+        }
+        setNotice(noticeId, null);
+
+        function line(from) { return [[from.latitude, from.longitude], [pin.latitude, pin.longitude]]; }
+        /* Start driving along `pts` (a straight line when no road route could be had). */
+        function begin(pts) {
+          if (!alive()) return;
+          var straight = !pts || pts.length < 2;
+          if (straight) pts = line(startAt);   /* the virtual driver still moves, but a straight line is never drawn */
+          simSetRoute(pts);
+          sim.dist = simNearest(startAt);   /* start from the route point nearest the technician (or the last simulated spot) */
+          if (!straight && (!state.route || state.route.length < 2)) {   /* a route drawn just now; the existing one stays as is */
+            state.route = pts;
+            drawRouteLine();
+          }
+          simDrive();
+        }
+        /* Already past Start (reload, or the trip was started earlier): no T2. Use a route we already have, in this order: the
+           page's own, then the one saved at Start trip (or sent by the backend). A route is only drawn when there is none,
+           because every Routes call is billed and a reload must not trigger one. */
+        var have = (state.route && state.route.length >= 2) ? state.route.slice() : simSavedRoute();
+        if (have.length >= 2) { begin(have); return; }   /* the same route: never replaced or extended */
+        simDrawn(startAt, pin).then(function (drawn) { begin(drawn.pts); });
       }
-      /* Already past Start (reload, or the trip was started earlier): no T2. Use a route we already have, in this order: the
-         page's own, then the one saved at Start trip (or sent by the backend). A route is only drawn when there is none,
-         because every Routes call is billed and a reload must not trigger one. */
-      var have = (state.route && state.route.length >= 2) ? state.route.slice() : simSavedRoute();
-      if (have.length >= 2) { begin(resume ? have : simJoin(have, startAt)); return; }
-      simDrawn(startAt, pin).then(function (drawn) { begin(drawn.pts); });
     }
 
     /* The route saved at Start trip in this tab, or the one the backend put in the job payload ([] when there is none). */
@@ -1834,18 +1854,18 @@ export default function boot(options) {
       simRender();
       if (destroyed) return;
       if (state.stage === 'assigning') setNotice('start-notice', null);
-      /* Back to the real GPS path (marker, arrival gate and manual steps read the real position again). Nothing is posted
-         automatically any more: the real poll is deliberately NOT restarted, or it would move the technician to the
-         tester's real location. A reload restores the normal full behaviour. The trip stays as it is on the server. */
+      /* Back to the real GPS and the normal location poll: the marker, arrival gate and posts follow the real position
+         again from its next fix. The trip stays as it is on the server. */
       state.fix = null;
       state.serverAway = null;
       updateGate();
       watchPermission();
+      askLocation();
       if (DRIVING_STAGES[state.stage]) {
         watchPosition();
-        setNotice('trip-notice', 'Simulation is off. Location is not being shared until you reload this page.');
+        if (!state.pollTimer) schedulePoll();
+        setNotice('trip-notice', null);
       }
-      askLocation();
     }
 
     function simResume() {
