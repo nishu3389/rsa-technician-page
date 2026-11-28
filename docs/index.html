@@ -301,20 +301,36 @@ const css = `/* Everything is scoped under #rsa-job: html, body and header are n
 #rsa-job .row .label { color: var(--muted); flex: 0 0 auto; font-weight: 600; }
 #rsa-job .row .value { text-align: right; font-weight: 700; word-break: break-word; }
 #rsa-job .row .value.tiny { font: 700 13px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-2); }
-#rsa-job .name { font-size: 22px; line-height: 1.2; font-weight: 800; margin: 0 0 4px; letter-spacing: -.01em; }
-#rsa-job .c-customer .row { padding: 4px 0 10px; }
-#rsa-job .c-customer .row .value { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; color: var(--ink-2); }
+#rsa-job .name { font-size: 22px; line-height: 1.2; font-weight: 800; margin: 0; letter-spacing: -.01em; overflow-wrap: anywhere; }
+/* customer: name, then the phone as one quiet line with an icon (the "Phone" label stays for screen readers), then the
+   address panel: pin + full-width text, with Copy address on its own row underneath */
+#rsa-job .c-customer .row { justify-content: flex-start; gap: 8px; padding: 6px 0 14px; border: 0; }
+#rsa-job .c-customer .row::before {
+  content: ""; width: 18px; height: 18px; flex: none; background: var(--muted);
+  -webkit-mask: ${RSA_ICONS.phone} center / contain no-repeat; mask: ${RSA_ICONS.phone} center / contain no-repeat;
+}
+#rsa-job .c-customer .row .label {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+#rsa-job .c-customer .row .value {
+  text-align: left; font: 700 15px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; color: var(--ink-2);
+}
 
-#rsa-job .addr { display: flex; align-items: flex-start; gap: 10px; padding: 12px 12px 12px 14px; border-radius: 12px; background: var(--tint); }
+#rsa-job .addr {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 10px; align-items: start;
+  padding: 14px; border-radius: 12px; background: var(--tint); border: 1px solid #d6e4f5;
+}
 #rsa-job .addr::before {
-  content: ""; width: 20px; height: 20px; flex: none; margin-top: 1px; background: var(--amber-ink);
+  content: ""; width: 22px; height: 22px; margin-top: 1px; background: var(--amber-ink);
   -webkit-mask: ${RSA_ICONS.pin} center / contain no-repeat; mask: ${RSA_ICONS.pin} center / contain no-repeat;
 }
-#rsa-job .address { flex: 1 1 auto; margin: 0; color: var(--ink); font-weight: 500; line-height: 1.45; min-width: 0; }
+#rsa-job .address { grid-column: 2; margin: 0; color: var(--ink); font-size: 15px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 #rsa-job .link-btn {
-  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; margin: -4px -4px -4px 0;
-  border-radius: 10px; background: #dde9f8; color: var(--ink); font-size: 13px; font-weight: 700;
+  grid-column: 2; justify-self: start; display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px; margin: 10px 0 -2px; padding: 0 14px; border-radius: 999px;
+  background: #fff; border: 1px solid #c9d9ee; color: var(--blue); font-size: 14px; font-weight: 700;
 }
+#rsa-job .link-btn:active { background: #e3eefc; }
 #rsa-job .link-btn::before {
   content: ""; width: 16px; height: 16px; background: currentColor;
   -webkit-mask: ${RSA_ICONS.copy} center / contain no-repeat; mask: ${RSA_ICONS.copy} center / contain no-repeat;
