@@ -2119,9 +2119,8 @@ export default function boot(options) {
         if (body.error === 'otp_incorrect') {
           input.value = '';
           input.focus();
-          setNotice('otp-notice', data.attempts_left !== undefined
-            ? 'Wrong OTP. ' + data.attempts_left + ' attempt' + (data.attempts_left === 1 ? '' : 's') + ' left.'
-            : (body.errorMessage || 'Wrong OTP. Check with the customer and try again.'), true);
+          /* the attempts left are not shown (nor the backend's message, which may carry them) */
+          setNotice('otp-notice', 'Wrong OTP. Check with the customer and try again.', true);
           return;
         }
         if (body.error === 'otp_attempts_exceeded' || result.status === 429) {
