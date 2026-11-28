@@ -14,7 +14,8 @@ var MAPS_CALLBACK = '__rsaGoogleMapsReady';
 
 /* Map behaviour while driving. */
 var FOLLOW_ZOOM = 17;                 /* street level while following the technician */
-var GPS_LOST_MS = 30000;              /* no fix for this long while tracking = "GPS signal lost" */
+var GPS_LOST_MS = 30000;
+var GPS_RETRY_MS = 8000;              /* re-subscribe to the GPS this long after an error, and at most this often */              /* no fix for this long while tracking = "GPS signal lost" */
 var HEADING_MIN_SPEED_MS = 1.5;       /* trust the GPS heading only above ~5 km/h */
 var HEADING_MIN_MOVE_M = 10;          /* otherwise derive it from positions at least this far apart */
 var ROUTE_STORAGE_KEY = 'rsa_route';  /* localStorage: the trip route, restored after a reload or in a new tab */
@@ -83,6 +84,7 @@ export default function boot(options) {
   var G = null;   /* window.google.maps once loaded; null when the map could not be loaded */
   var previousAuthFailure = window.gm_authFailure;
   var gpsTimer = null;
+  var gpsRetryTimer = null, lastWatchRestart = 0;
   var initialMarkup = root.innerHTML;
   var previousOverflow = document.body.style.overflow;
   document.body.style.overflow = 'hidden';
@@ -184,6 +186,7 @@ export default function boot(options) {
       heading: null,    /* direction of travel in degrees from north, or null while unknown */
       lastFixAt: 0,     /* Date.now() of the last fix (real or simulated) */
       watchStartedAt: 0,
+      gpsError: null,   /* last watchPosition error code (1 denied, 2 unavailable, 3 timeout), cleared by the next fix */
       away: null,      /* metres to the customer, or null when unknown (the gate then stays open) */
       locked: null,     /* null until a distance is first known; then true/false */
       serverAway: null,
@@ -392,7 +395,10 @@ export default function boot(options) {
         navigator.permissions.query({ name: 'geolocation' }).then(function (status) {
           if (destroyed) return;
           permissionStatus = status;
-          status.onchange = function () { setPermission(status.state); };
+          status.onchange = function () {
+            setPermission(status.state);
+            if (status.state === 'granted') restartWatch();   /* allowed again: do not wait for the next retry */
+          };
           setPermission(status.state);
           renderLocationGate();
         }).catch(function () {
@@ -676,6 +682,7 @@ export default function boot(options) {
       if (sim.on) return;   /* Simulate drive: real GPS fixes are ignored while the virtual position drives state.fix */
       state.fix = fix;
       state.serverAway = null;
+      state.gpsError = null;
       noteFix(fix);
       setPermission('granted');
       updateGate();
@@ -1182,6 +1189,7 @@ export default function boot(options) {
         gpsLost = lost;
         if (techMarker) techMarker.draw();
       }
+      if (lost && !sim.on) restartWatch();   /* no fix for a while: the watch may be dead, subscribe again */
     }
 
     var wakeLock = null, wakeLockPending = false, tripShown = false;
@@ -1224,7 +1232,10 @@ export default function boot(options) {
     function onVisibility() {
       syncWakeLock();
       checkGps();
-      if (!document.hidden) resumeTracking();
+      if (!document.hidden) {
+        if (gpsLost || state.gpsError) restartWatch();
+        resumeTracking();
+      }
     }
 
     /* ---------------- route kept across reloads ---------------- */
@@ -1525,9 +1536,34 @@ export default function boot(options) {
           heading: position.coords.heading,   /* map arrow only; never posted */
           speed: position.coords.speed
         });
+        state.gpsError = null;
         moveTech();
-      }, function () { /* the next poll keeps the last fix */ },
+      }, function (error) {
+        /* Location switched off, a timeout, or the permission withdrawn. Some phones never deliver another fix to this
+           watch even after Location comes back, so drop it and subscribe again shortly (see restartWatch). */
+        state.gpsError = (error && error.code) || 2;
+        if (!gpsRetryTimer) gpsRetryTimer = setTimeout(function () { gpsRetryTimer = null; restartWatch(); }, GPS_RETRY_MS);
+      },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+    }
+
+    /* Throw the location watch away and start a new one, plus a one-off read so a fix arrives as soon as the phone has
+       one. Runs after a watch error, every GPS_RETRY_MS while the GPS reads as lost, when the page comes back to the
+       front and when the location permission changes - so turning device Location off and on again recovers by itself.
+       Throttled to one restart per GPS_RETRY_MS. */
+    function restartWatch() {
+      if (demo || destroyed || sim.on || !DRIVING_STAGES[state.stage] || !navigator.geolocation) return;
+      if (Date.now() - lastWatchRestart < GPS_RETRY_MS) return;
+      lastWatchRestart = Date.now();
+      stopWatch();
+      watchPosition();
+      try {
+        navigator.geolocation.getCurrentPosition(function (position) {
+          if (destroyed || sim.on) return;
+          setFix({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy });
+          moveTech();
+        }, noop, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+      } catch (error) { /* the watch above is the main path */ }
     }
 
     function schedulePoll() {
@@ -2544,6 +2580,7 @@ export default function boot(options) {
       document.removeEventListener('visibilitychange', stopCameraWhenHidden);
       document.removeEventListener('visibilitychange', onVisibility);
       if (gpsTimer) { clearInterval(gpsTimer); gpsTimer = null; }
+      if (gpsRetryTimer) { clearTimeout(gpsRetryTimer); gpsRetryTimer = null; }
       if (sendTimer) { clearInterval(sendTimer); sendTimer = null; }
       if (wakeLock) { var held = wakeLock; wakeLock = null; held.release().catch(noop); }
       if (markerAnimation) { cancelAnimationFrame(markerAnimation); markerAnimation = null; }
