@@ -113,7 +113,7 @@ export default function startTestTools(tools) {
     var prog = tools.routeProgress();
     var gps = tools.gpsState();
     var periodic = !state.sendOn ? 'off (Location unchecked)'
-      : (tools.isPolling() ? 'on, every ' + (state.interval || 15) + ' s' + (sim.on ? ' (Test drive)' : '') : 'not running (stage ' + (state.stage || '-') + ')');
+      : (tools.isPolling() ? 'on, every ' + (state.interval || 15) + ' s' + (sim.on ? (sim.paused ? ' (Test drive paused)' : ' (Test drive)') : '') : 'not running (stage ' + (state.stage || '-') + ')');
     q('status').innerHTML =
       row('Stage', esc(tools.stageLabel())) +
       row('Last sent', esc(sent)) +

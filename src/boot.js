@@ -233,7 +233,7 @@ export default function boot(options) {
     var progressOverflow = null;  /* same, for the upload progress dialog */
     /* Simulate drive (testing only, see SHOW_TEST_SWITCH). Inert unless `on`. */
     var sim = {
-      on: false, run: 0, ready: false, timer: null, busy: false, finishing: false, finished: false,
+      on: false, paused: false, run: 0, ready: false, timer: null, busy: false, finishing: false, finished: false,
       fix: null, pts: [], cum: [], total: 0, dist: 0, lastTick: 0, lastPostAt: 0, pending: [], reason: 'stream',
       toggle: null, badge: null
     };
@@ -1670,15 +1670,16 @@ export default function boot(options) {
        SIM_SPEED_KMH from the route point nearest where the technician is, posting T3 (location) every
        location_interval_sec until it is within SIM_ARRIVE_M of the pin. Before Start trip, nothing moves yet: the
        technician taps Start trip as usual (T2 goes out from their real position) and the drive begins. A route is only
-       drawn when none exists. It never calls T5 or anything after it. Turning it OFF stops the drive and goes back to the
-       real GPS and the normal location poll; the trip is left as it is on the server. */
+       drawn when none exists. It never calls T5 or anything after it. Turning it OFF mid-drive only PAUSES it (simPause):
+       the pin stays put, that spot keeps being posted, and turning it ON again drives on from there. Before Start trip,
+       OFF goes back to the real GPS and the normal location poll (simTurnOff); the trip is left as it is on the server. */
 
     function simKey() { return SIM_STORAGE_KEY + ':' + (jobToken || jobId || ''); }
 
     function simSave() {
       try {
         if (sim.on && sim.fix) {
-          window.sessionStorage.setItem(simKey(), JSON.stringify({ on: true, latitude: sim.fix.latitude, longitude: sim.fix.longitude }));
+          window.sessionStorage.setItem(simKey(), JSON.stringify({ on: true, paused: sim.paused, latitude: sim.fix.latitude, longitude: sim.fix.longitude }));
         } else {
           window.sessionStorage.removeItem(simKey());
         }
@@ -1701,7 +1702,7 @@ export default function boot(options) {
     }
 
     function simRender() {
-      if (sim.toggle) sim.toggle.checked = sim.on;
+      if (sim.toggle) sim.toggle.checked = sim.on && !sim.paused;
       renderSendSwitch();
     }
 
@@ -1785,7 +1786,11 @@ export default function boot(options) {
       var interval = (state.interval || 15) * 1000;
       var dt = Math.min(now - sim.lastTick, interval * 2);    /* a throttled background tab must not teleport */
       sim.lastTick = now;
-      if (!sim.finishing) {
+      if (sim.paused) {
+        /* Paused (switch unchecked mid-drive): the technician is standing still, e.g. stuck in traffic. The pin stays,
+           the same spot keeps being posted on the interval with a fresh recorded_at, and the fix stays fresh. */
+        simSetPosition(sim.fix.latitude, sim.fix.longitude);
+      } else if (!sim.finishing) {
         sim.dist = Math.min(sim.total, sim.dist + (SIM_SPEED_KMH / 3.6) * (dt / 1000));   /* only ever forward */
         var at = simPointAt(sim.dist);
         simSetPosition(at[0], at[1]);
@@ -1827,7 +1832,16 @@ export default function boot(options) {
     }
 
     function simTurnOn(resume) {
-      if (!SHOW_TEST_SWITCH || sim.on || destroyed) return;
+      if (!SHOW_TEST_SWITCH || destroyed) return;
+      if (sim.on && sim.paused) {           /* re-checked after a pause: drive on from where the pin stopped */
+        sim.paused = false;
+        sim.lastTick = Date.now();
+        simSave();
+        simRender();
+        if (!sim.timer && DRIVING_STAGES[state.stage]) simDrive();
+        return;
+      }
+      if (sim.on) return;
       var pin = simPin();
       var driving = !!DRIVING_STAGES[state.stage];
       var noticeId = state.stage === 'assigning' ? 'start-notice' : 'trip-notice';
@@ -1846,6 +1860,7 @@ export default function boot(options) {
       var run = sim.run;
       sim.ready = false; sim.finishing = false; sim.finished = false; sim.busy = false;
       sim.pending = []; sim.dist = 0; sim.pts = []; sim.cum = []; sim.total = 0;
+      sim.paused = !!(resume && resume.paused);   /* a reload while paused stays paused at the saved spot */
       sim.reason = (resume && driving) ? 'reopen' : 'stream';
       /* real GPS out: no poll timer, no watch, and (via setFix / currentPosition) no real fixes */
       if (state.pollTimer) { clearTimeout(state.pollTimer); state.pollTimer = null; }
@@ -1927,9 +1942,20 @@ export default function boot(options) {
       return sim.ready;
     }
 
+    /* Unchecking the switch mid-drive pauses: the pin stays where it is (the real GPS stays out) and re-checking drives
+       on from that spot, like a technician who stopped in traffic. Before Start trip nothing has moved, so it turns off. */
+    function simPause() {
+      if (!sim.on || sim.paused) return;
+      if (!DRIVING_STAGES[state.stage] || !sim.fix) { simTurnOff(); return; }
+      sim.paused = true;
+      simSave();
+      simRender();
+    }
+
     function simTurnOff() {
       if (!sim.on) return;
       sim.on = false;
+      sim.paused = false;
       sim.run += 1;                      /* any request still in flight is ignored when it lands */
       simHalt();
       sim.ready = false; sim.fix = null; sim.pending = [];
@@ -1990,7 +2016,7 @@ export default function boot(options) {
       addWindowListener('resize', setText);
       setText();
       sim.toggle = ui.input;
-      ui.input.addEventListener('change', function () { if (ui.input.checked) simTurnOn(null); else simTurnOff(); });
+      ui.input.addEventListener('change', function () { if (ui.input.checked) simTurnOn(null); else simPause(); });
     }
 
     /* ---------------- "Sending location in Xs" (toolbar) ---------------- */
