@@ -1,4 +1,5 @@
 const markup = `<header>
+  <span class="gm-logo" role="img" aria-label="GoMechanic"></span>
   <div class="brand">GoMechanic &middot; Roadside assistance</div>
   <h1 id="page-title">Your job</h1>
   <span class="stage hidden" id="stage-pill"></span>
@@ -6,6 +7,8 @@ const markup = `<header>
 
 <div class="gate hidden" id="location-gate" role="alertdialog" aria-modal="true" aria-labelledby="location-gate-title" aria-describedby="location-gate-text">
   <div class="gate-card">
+    <span class="gm-logo ink" role="img" aria-label="GoMechanic"></span>
+    <span class="gate-icon" aria-hidden="true"></span>
     <h2 class="gate-title" id="location-gate-title">Location needed</h2>
     <p id="location-gate-text">Location is needed for this trip. Allow location for this page to start.</p>
     <button class="gate-btn" id="allow-location" type="button">Allow location</button>
@@ -29,9 +32,11 @@ const markup = `<header>
   </div>
 </div>
 <section id="view-assigning">
-  <div class="card state" id="loading">Loading the job&hellip;</div>
+  <div class="card state" id="loading"><span class="gm-logo ink" role="img" aria-label="GoMechanic"></span><span class="spinner" aria-hidden="true"></span>Loading the job&hellip;</div>
 
   <div class="card state hidden" id="error">
+    <span class="gm-logo ink" role="img" aria-label="GoMechanic"></span>
+    <span class="state-icon" aria-hidden="true"></span>
     <strong id="error-title">This link does not open a job</strong>
     <span id="error-text">Ask the ops team for a fresh link.</span>
   </div>
@@ -41,35 +46,31 @@ const markup = `<header>
     <p class="start-hint">Tap when you leave for the customer</p>
     <div class="notice hidden" id="start-notice"></div>
 
-    <div class="card">
+    <div class="card c-customer">
       <h2>Customer</h2>
       <p class="name" id="customer-name"></p>
       <div class="row">
         <span class="label">Phone</span>
         <span class="value" id="customer-phone"></span>
       </div>
-      <p class="address" id="customer-address"></p>
+      <div class="addr"><p class="address" id="customer-address"></p></div>
     </div>
 
-    <div class="card">
+    <div class="card c-vehicle">
       <h2>Vehicle</h2>
-      <div class="row">
-        <span class="label">Car</span>
-        <span class="value" id="car-name"></span>
-      </div>
-      <div class="row">
-        <span class="label">Registration</span>
-        <span class="value"><span class="plate" id="car-reg"></span></span>
+      <div class="veh">
+        <p class="veh-name" id="car-name"></p>
+        <span class="plate" id="car-reg" aria-label="Registration"></span>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card c-services">
       <h2>Services booked</h2>
       <ul class="services" id="services"></ul>
       <p class="muted tiny hidden" id="services-empty">No service lines on this order.</p>
     </div>
 
-    <div class="card">
+    <div class="card c-job">
       <h2>Job</h2>
       <div class="row">
         <span class="label">Order</span>
@@ -101,7 +102,7 @@ const markup = `<header>
       <div class="notice hidden" id="trip-notice"></div>
       <div class="notice hidden" id="screen-hint">Keep the screen on while driving. Location sharing pauses when the screen locks.</div>
 
-      <div class="card hidden" id="arrive-block">
+      <div class="card c-arrive hidden" id="arrive-block">
         <h2>Arrival</h2>
         <p class="otp-copy">Tap when you are at the customer's car. It is only accepted close to their location.</p>
         <button class="action primary" id="reached" type="button">I have reached</button>
@@ -109,7 +110,7 @@ const markup = `<header>
         <div class="notice hidden" id="arrive-notice"></div>
       </div>
 
-      <div class="card hidden" id="otp-block">
+      <div class="card c-otp hidden" id="otp-block">
         <h2>Arrival OTP</h2>
         <p class="otp-copy" id="otp-copy">Ask the customer for the 4-digit OTP shown in their app.</p>
         <input class="otp-input" id="otp-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4"
@@ -118,7 +119,7 @@ const markup = `<header>
         <div class="notice hidden" id="otp-notice"></div>
       </div>
 
-      <div class="card hidden" id="photos-block">
+      <div class="card c-photos hidden" id="photos-block">
         <h2>Proof of work</h2>
         <p class="otp-copy" id="photos-copy">Photograph the car when the work is done. Four live photos close the job.</p>
         <div class="shots" id="shots"></div>
@@ -128,41 +129,41 @@ const markup = `<header>
         <button class="action hidden" id="complete" type="button">Complete job</button>
       </div>
 
-      <div class="card hidden" id="done-block">
+      <div class="card c-done hidden" id="done-block">
+        <span class="gm-logo ink" role="img" aria-label="GoMechanic"></span>
+        <span class="done-icon" aria-hidden="true"></span>
         <h2>Completed</h2>
         <p class="done-line" id="done-line">Job completed</p>
         <p class="muted tiny" id="done-copy">The invoice has been generated. Nothing else is needed from you.</p>
       </div>
 
-      <div class="card">
+      <div class="card c-customer">
         <h2>Customer</h2>
         <p class="name" id="trip-customer-name"></p>
         <div class="row">
           <span class="label">Phone</span>
           <span class="value" id="trip-customer-phone"></span>
         </div>
-        <p class="address" id="trip-customer-address"></p>
-        <button class="link-btn hidden" id="copy-address" type="button">Copy address</button>
+        <div class="addr">
+          <p class="address" id="trip-customer-address"></p>
+          <button class="link-btn hidden" id="copy-address" type="button">Copy address</button>
+        </div>
       </div>
 
-      <div class="card">
+      <div class="card c-vehicle">
         <h2>Vehicle</h2>
-        <div class="row">
-          <span class="label">Car</span>
-          <span class="value" id="trip-car-name"></span>
-        </div>
-        <div class="row">
-          <span class="label">Registration</span>
-          <span class="value"><span class="plate" id="trip-car-reg"></span></span>
+        <div class="veh">
+          <p class="veh-name" id="trip-car-name"></p>
+          <span class="plate" id="trip-car-reg" aria-label="Registration"></span>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card c-services">
         <h2>Services booked</h2>
         <ul class="services" id="trip-services"></ul>
       </div>
 
-      <div class="card">
+      <div class="card c-job">
         <h2>Job</h2>
         <div class="row">
           <span class="label">Order id</span>

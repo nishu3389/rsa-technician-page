@@ -64,8 +64,8 @@ export default function startTestTools(tools) {
   style.textContent = CSS;
   document.head.appendChild(style);
   /* room for the (i) icon next to Test drive (DEBUG ONLY: the production toolbar never has this column) */
-  header.style.gridTemplateColumns = 'auto minmax(0, 1fr) auto auto auto';
-  header.style.gridTemplateAreas = '"stage . send sim dbg"';
+  header.style.gridTemplateColumns = 'auto minmax(0, max-content) minmax(0, 1fr) auto auto auto';
+  header.style.gridTemplateAreas = '"logo stage . send sim dbg"';
 
   var icon = document.createElement('button');
   icon.type = 'button';

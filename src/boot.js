@@ -713,6 +713,7 @@ export default function boot(options) {
       state.stage = stage;
       var pill = byId('stage-pill');
       pill.textContent = STAGE_LABELS[stage] || stage;
+      pill.setAttribute('data-stage', stage);   /* styling only: the pill's dot colour follows the stage */
       show('stage-pill');
       renderEta();
 
@@ -2040,12 +2041,12 @@ export default function boot(options) {
     function renderSendSwitch() {
       if (!sendUi) return;
       sendUi.input.checked = state.sendOn;
-      var wide = window.innerWidth >= 400;
+      var wide = window.innerWidth >= 430;   /* narrower: short labels, so the job status keeps its room in the toolbar */
       var secs = state.sendOn ? secondsToNextPost() : null;
       var label;
-      if (!state.sendOn) label = wide ? 'Location sending off' : 'Location off';
-      else if (secs === null) label = wide ? 'Sending location' : 'Location on';
-      else label = (wide ? 'Sending location in ' : 'Location in ') + secs + 's';
+      if (!state.sendOn) label = wide ? 'Location sending off' : 'Loc off';
+      else if (secs === null) label = wide ? 'Sending location' : 'Loc on';
+      else label = (wide ? 'Sending location in ' : 'Loc ') + secs + 's';
       sendUi.text.textContent = label;
       sendUi.box.classList.toggle('off', !state.sendOn);
     }
