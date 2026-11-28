@@ -38,6 +38,16 @@ var ROUTE_REDRAW_M = 4;      /* redraw the line only after the technician has ad
    not rendered and the page behaves exactly as before. (Search for "Simulate drive" to find every piece.) ---- */
 var SHOW_TEST_SWITCH = true;
 
+/* ---- TEST TOOLS (DEBUG ONLY, NOT FOR PRODUCTION): the (i) icon and its sheet live in testTools.js, a separate file that is
+   only requested when TEST_TOOLS_ENABLED is true. That is decided in exactly one place (testToolsEnabled() below) and
+   needs BOTH `?debug=1` in the page URL AND every API host (api and upload_api) on this test/dev allow-list. A
+   production host is never on it, so production never loads the file, whatever the URL says. ---- */
+var TEST_TOOLS_HOSTS = [
+  /^leadmanagerdev\.centralindia\.cloudapp\.azure\.com$/i,   /* dev backend */
+  /\.ngrok-free\.(dev|app)$/i,                                   /* ngrok tunnels (upload service, local backends) */
+  /^localhost$/i, /^127\.0\.0\.1$/                                /* a developer's own machine */
+];
+
 /* "Sending location in Xs" checkbox in the toolbar. Checked on every page open; unchecked, the location API (T3) is
    not called at all - neither by the real poll nor by Simulate drive - and nothing is queued to send later. */
 var SHOW_SEND_SWITCH = true;
@@ -150,6 +160,14 @@ export default function boot(options) {
     /* ---- DEMO MODE (local inspection only): active solely when the URL has ?demo=1. No API calls, no polling, no
        geolocation; sample data below. ?demo=1&stage=assigning shows the details view, anything else the trip view. */
     var demo = params.get('demo') === '1';
+
+    /* THE ONLY PLACE the test tools flag is decided (see TEST_TOOLS_HOSTS). */
+    function isTestHost(url) {
+      var host = '';
+      try { host = new URL(url, window.location.href).hostname; } catch (error) { host = ''; }
+      return !!host && TEST_TOOLS_HOSTS.some(function (re) { return re.test(host); });
+    }
+    var TEST_TOOLS_ENABLED = !demo && params.get('debug') === '1' && isTestHost(apiBase) && isTestHost(uploadApiBase);
     var demoStage = params.get('stage') === 'assigning' ? 'assigning' : 'trip';
     var demoMock = params.get('mock') || '';
     /* ?away=<metres> (demo only) fakes the distance from the customer; without it the demo gate stays open. */
@@ -186,7 +204,9 @@ export default function boot(options) {
       heading: null,    /* direction of travel in degrees from north, or null while unknown */
       lastFixAt: 0,     /* Date.now() of the last fix (real or simulated) */
       watchStartedAt: 0,
-      gpsError: null,   /* last watchPosition error code (1 denied, 2 unavailable, 3 timeout), cleared by the next fix */
+      gpsError: null,
+      lastLocPost: null,     /* { at, point, status, ok, error } of the last location post (for the test tools readout) */
+      routeVersion: null,    /* route_version, if the backend ever reports one */   /* last watchPosition error code (1 denied, 2 unavailable, 3 timeout), cleared by the next fix */
       away: null,      /* metres to the customer, or null when unknown (the gate then stays open) */
       locked: null,     /* null until a distance is first known; then true/false */
       serverAway: null,
@@ -288,6 +308,7 @@ export default function boot(options) {
       return response.json().catch(function () { return {}; })
         .then(function (body) {
           if (destroyed) return halted();
+          if (body && body.data && body.data.route_version !== undefined) state.routeVersion = body.data.route_version;
           return { ok: response.ok, status: response.status, body: body };
         });
     }
@@ -1590,19 +1611,43 @@ export default function boot(options) {
 
       var payload = { points: state.buffer.slice(-20) };
 
-      return postJson(API + 'location', payload).then(function (result) {
-        var end = endOfLink(result.body, result.status);
-        if (end) { failLink(end); return; }
-        var body = result.body || {};
-        if (!result.ok || !body.status) return;
-        var data = body.data || {};
-        if (data.accepted === false) { stopPolling(); applyStage(data.stage || state.stage); return; }
+      return postLocation(payload).then(function (data) {
+        if (!data) return;
         state.buffer = [];
         state.lastPostAt = Date.now();
+      }).catch(function () { /* buffered points go out on the next tick */ });
+    }
+
+    /* T3: one location post and its normal handling (link ended, stage moved on, ETA, interval). Used by the poll above
+       and by the debug test tools. Resolves the response data on success, null otherwise; rejects on a network error. */
+    function postLocation(payload) {
+      return postJson(API + 'location', payload).then(function (result) {
+        noteLocationPost(payload, result, null);
+        var end = endOfLink(result.body, result.status);
+        if (end) { failLink(end); return null; }
+        var body = result.body || {};
+        if (!result.ok || !body.status) return null;
+        var data = body.data || {};
+        if (data.accepted === false) { stopPolling(); applyStage(data.stage || state.stage); return null; }
         if (typeof data.eta_minutes === 'number') state.eta = data.eta_minutes;
         if (data.next_interval_sec) state.interval = data.next_interval_sec;
         if (data.stage) applyStage(data.stage);
-      }).catch(function () { /* buffered points go out on the next tick */ });
+        return data;
+      }, function (error) {
+        noteLocationPost(payload, null, error);
+        throw error;
+      });
+    }
+
+    function noteLocationPost(payload, result, error) {
+      var points = (payload && payload.points) || [];
+      state.lastLocPost = {
+        at: Date.now(),
+        point: points[points.length - 1] || null,
+        status: result ? result.status : null,
+        ok: !!(result && result.ok && result.body && result.body.status),
+        error: error ? ((error && error.message) || 'network error') : null
+      };
     }
 
     function stopWatch() {
@@ -1761,7 +1806,9 @@ export default function boot(options) {
       });
       if (sim.pending.length > 20) sim.pending = sim.pending.slice(-20);
       sim.lastPostAt = Date.now();
-      postJson(API + 'location', { points: sim.pending.slice(), reason: sim.reason }).then(function (result) {
+      var simPayload = { points: sim.pending.slice(), reason: sim.reason };
+      postJson(API + 'location', simPayload).then(function (result) {
+        noteLocationPost(simPayload, result, null);
         sim.busy = false;
         if (!sim.on || sim.run !== run || destroyed) return;
         var end = endOfLink(result.body, result.status);
@@ -1776,7 +1823,7 @@ export default function boot(options) {
         if (data.next_interval_sec) state.interval = data.next_interval_sec;
         if (data.stage && data.stage !== state.stage) applyStage(data.stage); else renderEta();
         if (sim.finishing) { simHalt(); sim.finished = true; }   /* the last point is in: stop the timer */
-      }).catch(function () { sim.busy = false; });
+      }).catch(function (error) { noteLocationPost(simPayload, null, error); sim.busy = false; });
     }
 
     function simTurnOn(resume) {
@@ -2539,6 +2586,105 @@ export default function boot(options) {
       });
     }
 
+    /* ---------------- TEST TOOLS loader (DEBUG ONLY, NOT FOR PRODUCTION) ----------------
+       Only called when TEST_TOOLS_ENABLED. The module is a separate file (a webpack chunk on the website, docs/testTools.js
+       in the standalone build), so a production page never downloads it. It gets the page's own functions below and
+       changes nothing about the API contract. */
+    var testToolsDispose = null;
+
+    function loadTestTools() {
+      import(/* webpackChunkName: 'rsaTestTools' */ './testTools.js').then(function (mod) {
+        if (destroyed) return;
+        testToolsDispose = mod.default(testToolsApi());
+      }).catch(function (error) { if (window.console) window.console.warn('Test tools could not load', error); });
+    }
+
+    function routePointAt(points, cum, distance) {
+      if (distance <= 0) return points[0];
+      if (distance >= cum[cum.length - 1]) return points[points.length - 1];
+      var i = 1;
+      while (i < cum.length - 1 && cum[i] < distance) i += 1;
+      var seg = cum[i] - cum[i - 1];
+      var t = seg > 0 ? (distance - cum[i - 1]) / seg : 0;
+      return [points[i - 1][0] + (points[i][0] - points[i - 1][0]) * t, points[i - 1][1] + (points[i][1] - points[i - 1][1]) * t];
+    }
+
+    function testToolsApi() {
+      return {
+        root: root, state: state, sim: sim, API: API, postJson: postJson, arriveRadius: ARRIVE_RADIUS_M,
+        postLocation: postLocation,
+        startTrip: startTrip,
+        markReached: markReached,
+        completeJob: completeJob,
+        stageLabel: function () { return (STAGE_LABELS[state.stage] || '-') + ' [' + (state.stage || '-') + ']'; },
+        isPolling: function () { return sim.on ? !!sim.timer : !!state.pollTimer; },
+        gpsState: function () {
+          if (sim.on) return 'simulated (Test drive)';
+          if (state.permission === 'denied' || state.gpsError === 1) return 'permission denied';
+          if (gpsLost) return 'lost';
+          if (state.gpsError) return 'error (code ' + state.gpsError + ')';
+          if (!state.fix) return 'waiting for a fix';
+          return 'ok (\u00b1' + Math.round(state.fix.accuracy || 0) + ' m)';
+        },
+        routeProgress: function () {
+          if (sim.on && sim.total > 0) return { pct: 100 * sim.dist / sim.total, source: 'Test drive' };
+          if (!state.route || state.route.length < 2) return null;
+          var g = routeGeometry(), total = g.cum[g.cum.length - 1];
+          return { pct: total > 0 ? 100 * g.along / total : 0, source: 'real GPS' };
+        },
+        routeLength: function (points) {
+          var m = 0;
+          for (var i = 1; i < points.length; i += 1) {
+            m += haversineM({ latitude: points[i - 1][0], longitude: points[i - 1][1] }, { latitude: points[i][0], longitude: points[i][1] });
+          }
+          return m;
+        },
+        /* Move to a fraction of the route. With Test drive on, the virtual technician moves there and drives on;
+           otherwise only the point is returned (the caller posts it once, the real GPS carries on). */
+        jumpTo: function (fraction) {
+          if (sim.on && sim.ready && sim.total > 0) {
+            sim.dist = fraction * sim.total;
+            sim.finishing = false; sim.finished = false;
+            var at = simPointAt(sim.dist);
+            routeGeo = null;              /* re-match from the start, so a jump backwards un-greys the route */
+            simSetPosition(at[0], at[1]);
+            drawRouteLine();
+            if (!sim.timer && DRIVING_STAGES[state.stage]) simDrive();
+            return { point: { latitude: at[0], longitude: at[1], accuracy_m: SIM_ACCURACY_M }, simulated: true };
+          }
+          if (!state.route || state.route.length < 2) return null;
+          var g = routeGeometry();
+          var p = routePointAt(state.route, g.cum, fraction * g.cum[g.cum.length - 1]);
+          return { point: { latitude: p[0], longitude: p[1], accuracy_m: Math.round((state.fix && state.fix.accuracy) || 10) }, simulated: false };
+        },
+        verifyOtp: function (otp) { byId('otp-input').value = otp; submitOtp(); },
+        /* The real uploadPhoto() with a generated JPEG instead of a camera frame. */
+        uploadTestPhoto: function () {
+          var canvas = document.createElement('canvas');
+          canvas.width = 960; canvas.height = 720;
+          var ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#7b2cbf'; ctx.fillRect(0, 0, 960, 720);
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 64px sans-serif';
+          ctx.fillText('TEST PHOTO', 60, 330);
+          ctx.font = '32px sans-serif';
+          ctx.fillText('Debug test tools \u00b7 ' + new Date().toISOString(), 60, 400);
+          canvas.toBlob(function (blob) {
+            if (!blob || destroyed) return;
+            uploadPhoto(new File([blob], 'test-photo-' + Date.now() + '.jpg', { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.8);
+        },
+        rerouteBlocked: function () { return (!state.route || state.route.length < 3) ? 'No route on the map yet.' : ''; },
+        /* Use a new route locally after the backend took it. */
+        useRoute: function (points, polyline) {
+          state.route = points;
+          routeGeo = null;
+          saveRoute(polyline);
+          drawRouteLine();
+          if (sim.on && sim.fix) { simSetRoute(points); sim.dist = simNearest(sim.fix); }
+        }
+      };
+    }
+
     /* ---------------- Google Maps JavaScript API (first boot only) ---------------- */
 
     /* Load the Maps JavaScript API once, then start the page. A missing key, a blocked script or a slow network never
@@ -2572,6 +2718,7 @@ export default function boot(options) {
     sendBuildUi();  /* "Sending location in Xs" checkbox (renders nothing when SHOW_SEND_SWITCH is false) */
     simBuildUi();   /* Simulate drive switch (testing only; renders nothing when SHOW_TEST_SWITCH is false) */
     withGoogleMaps(startPage);
+    if (TEST_TOOLS_ENABLED) loadTestTools();   /* DEBUG ONLY: never true on a production host */
 
     return function teardown() {
       if (destroyed) return;
@@ -2581,6 +2728,7 @@ export default function boot(options) {
       document.removeEventListener('visibilitychange', onVisibility);
       if (gpsTimer) { clearInterval(gpsTimer); gpsTimer = null; }
       if (gpsRetryTimer) { clearTimeout(gpsRetryTimer); gpsRetryTimer = null; }
+      if (testToolsDispose) { testToolsDispose(); testToolsDispose = null; }
       if (sendTimer) { clearInterval(sendTimer); sendTimer = null; }
       if (wakeLock) { var held = wakeLock; wakeLock = null; held.release().catch(noop); }
       if (markerAnimation) { cancelAnimationFrame(markerAnimation); markerAnimation = null; }

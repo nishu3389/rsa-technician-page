@@ -40,3 +40,21 @@ in the URL (otherwise anyone can craft a link that sends the job token to a serv
 
 ## Which API the page uses
 `&api=<url>` in the link wins. With no `api` in the link the page uses `apiBase` from `config.json` (production, `https://gomechanic.app/api/`). `&upload_api=` overrides the photo-upload base; without it uploads go to whichever API base is in use.
+
+## Test tools (debug only, never in production)
+An (i) icon next to "Test drive" opens a purple **TEST TOOLS: NOT FOR PRODUCTION** sheet: a live status readout,
+send location once, jump to X % of the route, send an old position, stage buttons, re-route.
+
+It appears only when **both** are true. That's decided in one place, `testToolsEnabled` / `TEST_TOOLS_ENABLED` in `src/boot.js`:
+- the page URL has `?debug=1`
+- the `api` **and** `upload_api` hosts are on `TEST_TOOLS_HOSTS` (leadmanagerdev…azure.com, `*.ngrok-free.dev|app`, localhost)
+
+The code lives in `src/testTools.js` → published as `docs/testTools.js` and loaded with a dynamic `import()` only when the
+flag is true. A page without the flag never requests that file.
+
+**Before a production release, check:**
+1. `src/boot.js`: `TEST_TOOLS_HOSTS` doesn't contain any production host. The production API / upload hosts must not match.
+2. Open the production link with `&debug=1`: no (i) icon, and DevTools → Network shows no `testTools.js` request.
+3. Optional hard removal: delete `src/testTools.js` (and `docs/testTools.js`). With the file gone, the import fails quietly
+   and the page is unaffected. On the website the same file is `src/routes/rsaTechnicianJob/testTools.js` (its own webpack
+   chunk, `rsaTestTools`).

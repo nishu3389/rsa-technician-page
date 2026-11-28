@@ -17,7 +17,7 @@ const WEBSITE_DIR = [
 
 if (process.argv.includes('--sync')) {
   if (!WEBSITE_DIR) throw new Error('--sync: could not find the website src/routes/rsaTechnicianJob folder');
-  ['markup.js', 'styles.js', 'boot.js'].forEach((f) => {
+  ['markup.js', 'styles.js', 'boot.js', 'testTools.js'].forEach((f) => {
     fs.copyFileSync(path.join(WEBSITE_DIR, f), src(f));
     console.log('synced', f);
   });
@@ -67,4 +67,7 @@ ${safe(app)}
 fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
 fs.writeFileSync(path.join(root, 'docs', 'index.html'), html);
 fs.writeFileSync(path.join(root, 'docs', '.nojekyll'), '');
+/* DEBUG ONLY: the test tools stay a separate file. boot.js imports it (dynamic import) only when TEST_TOOLS_ENABLED,
+   i.e. ?debug=1 on test/dev API hosts; a production page never requests it. */
+if (fs.existsSync(src('testTools.js'))) fs.copyFileSync(src('testTools.js'), path.join(root, 'docs', 'testTools.js'));
 console.log(`built docs/index.html (${(html.length / 1024).toFixed(1)} KB)`);
