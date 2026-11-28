@@ -2116,15 +2116,19 @@ export default function boot(options) {
           return;
         }
         var data = body.data || {};
-        if (body.error === 'otp_incorrect') {
-          input.value = '';
-          input.focus();
-          /* the attempts left are not shown (nor the backend's message, which may carry them) */
-          setNotice('otp-notice', 'Wrong OTP. Check with the customer and try again.', true);
+        var errorCode = String(body.error || '');
+        var errorText = String(body.errorMessage || body.message || '');
+        if (errorCode === 'otp_attempts_exceeded' || result.status === 429 || data.attempts_left === 0) {
+          setNotice('otp-notice', 'Too many wrong attempts. Support has been alerted \u2014 call them to restart the visit.', true);
           return;
         }
-        if (body.error === 'otp_attempts_exceeded' || result.status === 429) {
-          setNotice('otp-notice', 'Too many wrong attempts. Support has been alerted \u2014 call them to restart the visit.', true);
+        /* A wrong OTP, whatever code the backend uses for it. The attempts left are never shown, and neither is the
+           backend's own message, which may carry them ("Wrong OTP, 18 attempts left"). */
+        if (errorCode === 'otp_incorrect' || data.attempts_left !== undefined ||
+            (errorCode !== 'too_far_from_customer' && (/otp/i.test(errorCode) || /otp|attempt/i.test(errorText)))) {
+          input.value = '';
+          input.focus();
+          setNotice('otp-notice', 'Wrong OTP. Check with the customer and try again.', true);
           return;
         }
         if (body.error === 'too_far_from_customer') {
